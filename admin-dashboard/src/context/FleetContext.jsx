@@ -3,7 +3,7 @@ import io from 'socket.io-client';
 
 const FleetContext = createContext();
 
-const HOST = 'http://127.0.0.1:4000';
+const HOST = 'https://mpnmjbuses.vercel.app';
 
 export function FleetProvider({ children }) {
   const [socket, setSocket] = useState(null);

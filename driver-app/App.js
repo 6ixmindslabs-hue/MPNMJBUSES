@@ -16,7 +16,7 @@ import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 
-const BACKEND_URL = 'http://10.60.100.146:4000'; // Change to machine IP for physical devices
+const BACKEND_URL = 'https://mpnmjbuses.vercel.app';
 const LOCATION_TASK_NAME = 'background-location-task';
 
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {

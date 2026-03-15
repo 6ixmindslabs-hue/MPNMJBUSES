@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bus, Save, Hash, Trash2, Edit2, X } from 'lucide-react';
 
-const HOST = 'http://127.0.0.1:4000';
+const HOST = 'https://mpnmjbuses.vercel.app';
 
 export default function BusesPage() {
   const [buses, setBuses] = useState([]);

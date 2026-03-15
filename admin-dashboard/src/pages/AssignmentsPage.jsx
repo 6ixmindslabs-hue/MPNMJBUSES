@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link2, User, Bus, Map as MapIcon, Save, RefreshCw, Trash2, Edit2, X } from 'lucide-react';
 
-const HOST = 'http://127.0.0.1:4000';
+const HOST = 'https://mpnmjbuses.vercel.app';
 
 export default function AssignmentsPage() {
   const [drivers, setDrivers] = useState([]);
