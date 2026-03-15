@@ -3,7 +3,7 @@ import io from 'socket.io-client';
 
 const FleetContext = createContext();
 
-const HOST = 'https://mpnmjbuses.vercel.app';
+const HOST = import.meta.env.VITE_BACKEND_URL || 'https://mpnmjbuses.vercel.app';
 
 export function FleetProvider({ children }) {
   const [socket, setSocket] = useState(null);

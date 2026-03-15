@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Shield, User, Key, Save, Trash2, Edit2, X, AlertTriangle } from 'lucide-react';
 
-const HOST = 'https://mpnmjbuses.vercel.app';
+const HOST = import.meta.env.VITE_BACKEND_URL || 'https://mpnmjbuses.vercel.app';
 
 export default function DriversPage() {
   const [drivers, setDrivers] = useState([]);

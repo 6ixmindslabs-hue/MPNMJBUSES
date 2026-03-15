@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Map, MapPin, Plus, Trash2, Save, Clock, Navigation, Edit2, X } from 'lucide-react';
 
-const HOST = 'https://mpnmjbuses.vercel.app';
+const HOST = import.meta.env.VITE_BACKEND_URL || 'https://mpnmjbuses.vercel.app';
 
 export default function RoutesPage() {
   const [routes, setRoutes] = useState([]);
