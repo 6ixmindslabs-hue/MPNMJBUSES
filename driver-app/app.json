@@ -28,8 +28,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "cbf07234-99ad-41c7-af6d-44af13a27137"
+        "projectId": "3ae4ef95-da5b-4622-b72e-a53c8bcbec4f"
       }
-    }
+    },
+    "owner": "6ixmindslabs"
   }
 }

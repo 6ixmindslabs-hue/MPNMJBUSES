@@ -230,3 +230,6 @@ httpServer.listen(PORT, () => {
   console.log(`║   Transport OS  —  Port ${PORT}            ║`);
   console.log(`╚══════════════════════════════════════════╝\n`);
 });
+
+// Export the http server for Vercel Serverless functions
+export default httpServer;
