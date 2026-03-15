@@ -107,6 +107,26 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
+// Root route — Vercel health check & service info
+app.get('/', (_req, res) => {
+  res.json({
+    service: 'Transport OS Fleet Intelligence Engine',
+    status: 'ACTIVE',
+    version: '1.0.0',
+    uptime: process.uptime(),
+    timestamp: Date.now(),
+    endpoints: [
+      'GET  /health',
+      'GET  /api/fleet',
+      'GET  /api/drivers',
+      'GET  /api/buses',
+      'GET  /api/routes',
+      'GET  /api/assignments',
+      'GET  /api/alerts',
+    ],
+  });
+});
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ACTIVE',
@@ -239,5 +259,10 @@ if (process.env.VERCEL !== '1') {
   });
 }
 
-// Export the http server as the Vercel serverless handler
-export default httpServer;
+// ── Vercel Serverless Handler ────────────────────────────────────────────────
+// @vercel/node expects a plain (req, res) function, NOT an http.Server instance.
+// We route every request through the http server so both Express routes AND
+// Socket.IO polling requests are handled correctly.
+export default function handler(req, res) {
+  httpServer.emit('request', req, res);
+}
