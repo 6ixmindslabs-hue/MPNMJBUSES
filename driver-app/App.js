@@ -19,19 +19,36 @@ import * as Location from 'expo-location';
 const BACKEND_URL = 'https://mpnmjbuses.vercel.app';
 const LOCATION_TASK_NAME = 'background-location-task';
 
+const fetchWithTimeout = async (url, options, timeout = 5000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+};
+
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
-    console.error('Background Location Error:', error);
+    console.error('[Background] Location Error:', error);
     return;
   }
   if (data) {
     const { locations } = data;
     try {
       const assignmentStr = await AsyncStorage.getItem('assignment');
-      if (assignmentStr && locations && locations.length > 0) {
+      const isTracking = await AsyncStorage.getItem('isTracking');
+      
+      if (isTracking === 'true' && assignmentStr && locations && locations.length > 0) {
         const assignment = JSON.parse(assignmentStr);
         const coords = locations[0].coords;
-        await fetch(`${BACKEND_URL}/api/telemetry`, {
+        
+        // Use timeout to prevent background task from hanging indefinitely
+        await fetchWithTimeout(`${BACKEND_URL}/api/telemetry`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -43,10 +60,10 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
             accuracy: coords.accuracy || 0,
             timestamp: Date.now()
           })
-        });
+        }).catch(err => console.error('[Background] Telemetry upload failed:', err.message));
       }
     } catch (e) {
-      console.error('Task execution error:', e);
+      console.error('[Background] Task execution error:', e);
     }
   }
 });
@@ -90,7 +107,10 @@ export default function App() {
         // Socket connection logic for foreground map
         if (assignmentStr) {
           const parsed = JSON.parse(assignmentStr);
-          socketRef.current = io(BACKEND_URL);
+          socketRef.current = io(BACKEND_URL, {
+            transports: ['polling'],
+            autoConnect: true
+          });
           socketRef.current.emit('driver:join', { 
             busId: parsed.busId, 
             routeId: parsed.routeId 
@@ -189,20 +209,7 @@ export default function App() {
       return;
     }
 
-    setIsTracking(true);
-    await AsyncStorage.setItem('isTracking', 'true');
-    
-    // Connect Socket (Foreground)
-    socketRef.current = io(BACKEND_URL);
-    socketRef.current.emit('driver:join', { 
-      busId: assignment.busId, 
-      routeId: assignment.routeId 
-    });
-
-    // Start UI Watcher and telemetry emit
-    setupForegroundLocation(assignment);
-
-    // Start Headless Background Task
+    // Start Headless Background Task first, only toggle UI if it succeeds
     try {
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.High,
@@ -216,11 +223,28 @@ export default function App() {
           notificationColor: "#f59e0b",
         }
       });
+
+      // successful start
+      setIsTracking(true);
+      await AsyncStorage.setItem('isTracking', 'true');
+      
+      // Connect Socket (Foreground update)
+      socketRef.current = io(BACKEND_URL, {
+        transports: ['polling']
+      });
+      socketRef.current.emit('driver:join', { 
+        busId: assignment.busId, 
+        routeId: assignment.routeId 
+      });
+
+      // Start UI Watcher
+      setupForegroundLocation(assignment);
+
     } catch (err) {
-      console.warn("Background location disabled:", err);
+      console.error("Background location failed to start:", err);
       Alert.alert(
-        "Foreground Only Mode",
-        "Full background tracking requires a custom compiled build to obtain Android Foreground Service permissions. For now, the app will track perfectly while you keep it open."
+        "Auto-Closing Prevention",
+        "Full background tracking requires a specific OS permission. If the app closes, please ensure 'Allow all the time' location is selected in settings."
       );
     }
   };
