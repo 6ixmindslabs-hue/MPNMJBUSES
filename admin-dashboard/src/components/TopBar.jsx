@@ -29,7 +29,9 @@ export default function TopBar({ onMenuClick }) {
         <button className="mobile-menu-btn" onClick={onMenuClick}>
            <MenuIcon size={20} />
         </button>
-        <div className="org-icon" style={{ borderColor: isConnected ? '#16a34a' : '#dc2626' }}>MC</div>
+        <div className="org-icon" style={{ borderColor: isConnected ? '#f59e0b' : '#dc2626', overflow: 'hidden' }}>
+          <img src="/favicon.png" alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        </div>
         <div className="org-details">
           <span className="org-name">Metro Campus</span>
           <span className="org-sub">Operations</span>
