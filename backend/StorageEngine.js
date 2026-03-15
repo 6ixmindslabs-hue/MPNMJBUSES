@@ -1,110 +1,168 @@
 // ──────────────────────────────────────────────────────────
-// StorageEngine — In-Memory (Vercel-compatible)
-//
-// ⚠️  VERCEL NOTE: Serverless functions are stateless.
-//     Data stored here survives only within the same warm
-//     function instance. For persistent storage, migrate to
-//     Supabase (already in your deps) or another DB.
+// StorageEngine — Supabase Backend (Persistent)
 // ──────────────────────────────────────────────────────────
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+dotenv.config();
 
-// Load seed data from db.json at cold-start (read-only is fine)
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, 'db.json');
-
-function loadSeed() {
-  try {
-    if (fs.existsSync(DB_PATH)) {
-      return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-    }
-  } catch (_) {}
-  return { drivers: [], buses: [], routes: [], assignments: [] };
+let supabase = null;
+if (SUPABASE_URL && SUPABASE_KEY) {
+  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  console.log('[StorageEngine] Connected to Supabase Data Layer.');
+} else {
+  console.error('[StorageEngine] CRITICAL: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.');
 }
 
-// Single in-process store — shared across requests in the same warm instance
-const STORE = loadSeed();
-
 export class StorageEngine {
-  constructor() {
-    this.db = STORE;
-  }
-
-  // No-op save — we're in-memory only on Vercel
-  save() {}
+  constructor() {}
 
   // --- Drivers ---
-  getDrivers() { return this.db.drivers; }
-  addDriver(driver) {
-    this.db.drivers.push(driver);
+  async getDrivers() {
+    if (!supabase) return [];
+    const { data, error } = await supabase.from('drivers').select('*');
+    if (error) { console.error('getDrivers:', error); return []; }
+    return data.map(d => ({
+      login: d.login,
+      name: d.name,
+      password: d.password,
+      createdAt: d.created_at
+    }));
   }
-  updateDriver(login, updatedData) {
-    const idx = this.db.drivers.findIndex(d => d.login === login);
-    if (idx > -1) {
-      this.db.drivers[idx] = { ...this.db.drivers[idx], ...updatedData };
-      return true;
-    }
-    return false;
+  
+  async addDriver(driver) {
+    if (!supabase) return;
+    await supabase.from('drivers').insert([{
+      login: driver.login,
+      name: driver.name,
+      password: driver.password,
+      created_at: driver.createdAt || new Date().toISOString()
+    }]);
   }
-  deleteDriver(login) {
-    const originalLen = this.db.drivers.length;
-    this.db.drivers = this.db.drivers.filter(d => d.login !== login);
-    return this.db.drivers.length !== originalLen;
+  
+  async updateDriver(login, updatedData) {
+    if (!supabase) return false;
+    const payload = {};
+    if (updatedData.name) payload.name = updatedData.name;
+    if (updatedData.password) payload.password = updatedData.password;
+    
+    const { error } = await supabase.from('drivers').update(payload).eq('login', login);
+    return !error;
+  }
+  
+  async deleteDriver(login) {
+    if (!supabase) return false;
+    const { error } = await supabase.from('drivers').delete().eq('login', login);
+    return !error;
   }
 
   // --- Buses ---
-  getBuses() { return this.db.buses; }
-  addBus(bus) {
-    this.db.buses.push(bus);
+  async getBuses() {
+    if (!supabase) return [];
+    const { data, error } = await supabase.from('buses').select('*');
+    if (error) { console.error('getBuses:', error); return []; }
+    return data.map(b => ({
+      busId: b.bus_id,
+      status: b.status,
+      registeredAt: b.registered_at
+    }));
   }
-  updateBus(busId, updatedData) {
-    const idx = this.db.buses.findIndex(b => b.busId === busId);
-    if (idx > -1) {
-      this.db.buses[idx] = { ...this.db.buses[idx], ...updatedData };
-      return true;
-    }
-    return false;
+  
+  async addBus(bus) {
+    if (!supabase) return;
+    await supabase.from('buses').insert([{
+      bus_id: bus.busId,
+      status: bus.status || 'IDLE',
+      registered_at: bus.registeredAt || new Date().toISOString()
+    }]);
   }
-  deleteBus(busId) {
-    const originalLen = this.db.buses.length;
-    this.db.buses = this.db.buses.filter(b => b.busId !== busId);
-    return this.db.buses.length !== originalLen;
+  
+  async updateBus(busId, updatedData) {
+    if (!supabase) return false;
+    const payload = {};
+    if (updatedData.status) payload.status = updatedData.status;
+    
+    const { error } = await supabase.from('buses').update(payload).eq('bus_id', busId);
+    return !error;
+  }
+  
+  async deleteBus(busId) {
+    if (!supabase) return false;
+    const { error } = await supabase.from('buses').delete().eq('bus_id', busId);
+    return !error;
   }
 
   // --- Routes ---
-  getRoutes() { return this.db.routes; }
-  addRoute(route) {
-    this.db.routes.push(route);
+  async getRoutes() {
+    if (!supabase) return [];
+    const { data, error } = await supabase.from('routes').select('*');
+    if (error) { console.error('getRoutes:', error); return []; }
+    return data.map(r => ({
+      routeId: r.route_id,
+      name: r.name,
+      stops: r.stops || [],
+      createdAt: r.created_at
+    }));
   }
-  updateRoute(routeId, updatedData) {
-    const idx = this.db.routes.findIndex(r => r.routeId === routeId);
-    if (idx > -1) {
-      this.db.routes[idx] = { ...this.db.routes[idx], ...updatedData };
-      return true;
-    }
-    return false;
+  
+  async addRoute(route) {
+    if (!supabase) return;
+    await supabase.from('routes').insert([{
+      route_id: route.routeId,
+      name: route.name,
+      stops: route.stops || [],
+      created_at: route.createdAt || new Date().toISOString()
+    }]);
   }
-  deleteRoute(routeId) {
-    const originalLen = this.db.routes.length;
-    this.db.routes = this.db.routes.filter(r => r.routeId !== routeId);
-    return this.db.routes.length !== originalLen;
+  
+  async updateRoute(routeId, updatedData) {
+    if (!supabase) return false;
+    const payload = {};
+    if (updatedData.name) payload.name = updatedData.name;
+    if (updatedData.stops) payload.stops = updatedData.stops;
+    
+    const { error } = await supabase.from('routes').update(payload).eq('route_id', routeId);
+    return !error;
+  }
+  
+  async deleteRoute(routeId) {
+    if (!supabase) return false;
+    const { error } = await supabase.from('routes').delete().eq('route_id', routeId);
+    return !error;
   }
 
   // --- Assignments ---
-  getAssignments() { return this.db.assignments; }
-  updateAssignment(assignment) {
-    const idx = this.db.assignments.findIndex(a => a.busId === assignment.busId);
-    if (idx > -1) {
-      this.db.assignments[idx] = { ...this.db.assignments[idx], ...assignment };
-    } else {
-      this.db.assignments.push(assignment);
-    }
+  async getAssignments() {
+    if (!supabase) return [];
+    const { data, error } = await supabase.from('assignments').select('*');
+    if (error) { console.error('getAssignments:', error); return []; }
+    return data.map(a => ({
+      busId: a.bus_id,
+      driverId: a.driver_id,
+      routeId: a.route_id,
+      shiftDirection: a.shift_direction,
+      updatedAt: a.updated_at
+    }));
   }
-  deleteAssignment(busId) {
-    const originalLen = this.db.assignments.length;
-    this.db.assignments = this.db.assignments.filter(a => a.busId !== busId);
-    return this.db.assignments.length !== originalLen;
+  
+  async updateAssignment(assignment) {
+    if (!supabase) return;
+    // Assignments acts as upset typically on bus_id
+    const { error } = await supabase.from('assignments').upsert([{
+      bus_id: assignment.busId,
+      driver_id: assignment.driverId,
+      route_id: assignment.routeId,
+      shift_direction: assignment.shiftDirection || 'INBOUND',
+      updated_at: new Date().toISOString()
+    }], { onConflict: 'bus_id' });
+    if (error) console.error('updateAssignment:', error);
+  }
+  
+  async deleteAssignment(busId) {
+    if (!supabase) return false;
+    const { error } = await supabase.from('assignments').delete().eq('bus_id', busId);
+    return !error;
   }
 }

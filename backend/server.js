@@ -44,58 +44,58 @@ const fleetEngine    = new FleetStateEngine(io, alertEngine, healthMonitor);
 // ──────────────────────────────────────────────────────────
 
 // Drivers
-app.get('/api/drivers', (req, res) => res.json(storage.getDrivers()));
-app.post('/api/drivers', (req, res) => {
-  storage.addDriver(req.body);
+app.get('/api/drivers', async (req, res) => res.json(await storage.getDrivers()));
+app.post('/api/drivers', async (req, res) => {
+  await storage.addDriver(req.body);
   res.json({ success: true });
 });
-app.put('/api/drivers/:login', (req, res) => {
-  const ok = storage.updateDriver(req.params.login, req.body);
+app.put('/api/drivers/:login', async (req, res) => {
+  const ok = await storage.updateDriver(req.params.login, req.body);
   res.json({ success: ok });
 });
-app.delete('/api/drivers/:login', (req, res) => {
-  const ok = storage.deleteDriver(req.params.login);
+app.delete('/api/drivers/:login', async (req, res) => {
+  const ok = await storage.deleteDriver(req.params.login);
   res.json({ success: ok });
 });
 
 // Buses
-app.get('/api/buses', (req, res) => res.json(storage.getBuses()));
-app.post('/api/buses', (req, res) => {
-  storage.addBus(req.body);
+app.get('/api/buses', async (req, res) => res.json(await storage.getBuses()));
+app.post('/api/buses', async (req, res) => {
+  await storage.addBus(req.body);
   res.json({ success: true });
 });
-app.put('/api/buses/:busId', (req, res) => {
-  const ok = storage.updateBus(req.params.busId, req.body);
+app.put('/api/buses/:busId', async (req, res) => {
+  const ok = await storage.updateBus(req.params.busId, req.body);
   res.json({ success: ok });
 });
-app.delete('/api/buses/:busId', (req, res) => {
-  const ok = storage.deleteBus(req.params.busId);
+app.delete('/api/buses/:busId', async (req, res) => {
+  const ok = await storage.deleteBus(req.params.busId);
   res.json({ success: ok });
 });
 
 // Routes
-app.get('/api/routes', (req, res) => res.json(storage.getRoutes()));
-app.post('/api/routes', (req, res) => {
-  storage.addRoute(req.body);
+app.get('/api/routes', async (req, res) => res.json(await storage.getRoutes()));
+app.post('/api/routes', async (req, res) => {
+  await storage.addRoute(req.body);
   res.json({ success: true });
 });
-app.put('/api/routes/:routeId', (req, res) => {
-  const ok = storage.updateRoute(req.params.routeId, req.body);
+app.put('/api/routes/:routeId', async (req, res) => {
+  const ok = await storage.updateRoute(req.params.routeId, req.body);
   res.json({ success: ok });
 });
-app.delete('/api/routes/:routeId', (req, res) => {
-  const ok = storage.deleteRoute(req.params.routeId);
+app.delete('/api/routes/:routeId', async (req, res) => {
+  const ok = await storage.deleteRoute(req.params.routeId);
   res.json({ success: ok });
 });
 
 // Assignments
-app.get('/api/assignments', (req, res) => res.json(storage.getAssignments()));
-app.post('/api/assignments', (req, res) => {
-  storage.updateAssignment(req.body);
+app.get('/api/assignments', async (req, res) => res.json(await storage.getAssignments()));
+app.post('/api/assignments', async (req, res) => {
+  await storage.updateAssignment(req.body);
   res.json({ success: true });
 });
-app.delete('/api/assignments/:busId', (req, res) => {
-  const ok = storage.deleteAssignment(req.params.busId);
+app.delete('/api/assignments/:busId', async (req, res) => {
+  const ok = await storage.deleteAssignment(req.params.busId);
   res.json({ success: ok });
 });
 
