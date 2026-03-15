@@ -1,3 +1,13 @@
+// ──────────────────────────────────────────────────────────
+// StorageEngine — In-Memory (Vercel-compatible)
+//
+// ⚠️  VERCEL NOTE: Serverless functions are stateless.
+//     Data stored here survives only within the same warm
+//     function instance. For persistent storage, migrate to
+//     Supabase (already in your deps) or another DB.
+// ──────────────────────────────────────────────────────────
+
+// Load seed data from db.json at cold-start (read-only is fine)
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -5,52 +15,35 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, 'db.json');
 
-const INITIAL_DB = {
-  drivers: [],
-  buses: [],
-  routes: [],
-  assignments: []
-};
+function loadSeed() {
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+    }
+  } catch (_) {}
+  return { drivers: [], buses: [], routes: [], assignments: [] };
+}
+
+// Single in-process store — shared across requests in the same warm instance
+const STORE = loadSeed();
 
 export class StorageEngine {
   constructor() {
-    this.db = INITIAL_DB;
-    this.load();
+    this.db = STORE;
   }
 
-  load() {
-    try {
-      if (fs.existsSync(DB_PATH)) {
-        const data = fs.readFileSync(DB_PATH, 'utf8');
-        this.db = JSON.parse(data);
-      } else {
-        this.save();
-      }
-    } catch (err) {
-      console.error('[StorageEngine] Load error:', err);
-      this.db = INITIAL_DB;
-    }
-  }
-
-  save() {
-    try {
-      fs.writeFileSync(DB_PATH, JSON.stringify(this.db, null, 2));
-    } catch (err) {
-      console.error('[StorageEngine] Save error:', err);
-    }
-  }
+  // No-op save — we're in-memory only on Vercel
+  save() {}
 
   // --- Drivers ---
   getDrivers() { return this.db.drivers; }
   addDriver(driver) {
     this.db.drivers.push(driver);
-    this.save();
   }
   updateDriver(login, updatedData) {
     const idx = this.db.drivers.findIndex(d => d.login === login);
     if (idx > -1) {
       this.db.drivers[idx] = { ...this.db.drivers[idx], ...updatedData };
-      this.save();
       return true;
     }
     return false;
@@ -58,24 +51,18 @@ export class StorageEngine {
   deleteDriver(login) {
     const originalLen = this.db.drivers.length;
     this.db.drivers = this.db.drivers.filter(d => d.login !== login);
-    if (this.db.drivers.length !== originalLen) {
-      this.save();
-      return true;
-    }
-    return false;
+    return this.db.drivers.length !== originalLen;
   }
 
   // --- Buses ---
   getBuses() { return this.db.buses; }
   addBus(bus) {
     this.db.buses.push(bus);
-    this.save();
   }
   updateBus(busId, updatedData) {
     const idx = this.db.buses.findIndex(b => b.busId === busId);
     if (idx > -1) {
       this.db.buses[idx] = { ...this.db.buses[idx], ...updatedData };
-      this.save();
       return true;
     }
     return false;
@@ -83,24 +70,18 @@ export class StorageEngine {
   deleteBus(busId) {
     const originalLen = this.db.buses.length;
     this.db.buses = this.db.buses.filter(b => b.busId !== busId);
-    if (this.db.buses.length !== originalLen) {
-      this.save();
-      return true;
-    }
-    return false;
+    return this.db.buses.length !== originalLen;
   }
 
   // --- Routes ---
   getRoutes() { return this.db.routes; }
   addRoute(route) {
     this.db.routes.push(route);
-    this.save();
   }
   updateRoute(routeId, updatedData) {
     const idx = this.db.routes.findIndex(r => r.routeId === routeId);
     if (idx > -1) {
       this.db.routes[idx] = { ...this.db.routes[idx], ...updatedData };
-      this.save();
       return true;
     }
     return false;
@@ -108,11 +89,7 @@ export class StorageEngine {
   deleteRoute(routeId) {
     const originalLen = this.db.routes.length;
     this.db.routes = this.db.routes.filter(r => r.routeId !== routeId);
-    if (this.db.routes.length !== originalLen) {
-      this.save();
-      return true;
-    }
-    return false;
+    return this.db.routes.length !== originalLen;
   }
 
   // --- Assignments ---
@@ -124,15 +101,10 @@ export class StorageEngine {
     } else {
       this.db.assignments.push(assignment);
     }
-    this.save();
   }
   deleteAssignment(busId) {
     const originalLen = this.db.assignments.length;
     this.db.assignments = this.db.assignments.filter(a => a.busId !== busId);
-    if (this.db.assignments.length !== originalLen) {
-      this.save();
-      return true;
-    }
-    return false;
+    return this.db.assignments.length !== originalLen;
   }
 }

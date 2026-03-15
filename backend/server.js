@@ -23,7 +23,10 @@ const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 30000,
   pingInterval: 10000,
-  transports: ['websocket', 'polling'],
+  // Vercel serverless does not support persistent WebSocket upgrades.
+  // Use polling so Socket.IO works over standard HTTP requests.
+  transports: ['polling'],
+  allowEIO3: true,
 });
 
 const PORT = process.env.PORT || 4000;
@@ -225,11 +228,16 @@ io.on('connection', (socket) => {
 // ──────────────────────────────────────────────────────────
 // Start Server
 // ──────────────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
-  console.log(`\n╔══════════════════════════════════════════╗`);
-  console.log(`║   Transport OS  —  Port ${PORT}            ║`);
-  console.log(`╚══════════════════════════════════════════╝\n`);
-});
+//
+// When running locally (not on Vercel), start the HTTP server normally.
+// On Vercel, the runtime manages port binding — do NOT call .listen().
+if (process.env.VERCEL !== '1') {
+  httpServer.listen(PORT, () => {
+    console.log(`\n╔══════════════════════════════════════════╗`);
+    console.log(`║   Transport OS  —  Port ${PORT}            ║`);
+    console.log(`╚══════════════════════════════════════════╝\n`);
+  });
+}
 
-// Export the http server for Vercel Serverless functions
+// Export the http server as the Vercel serverless handler
 export default httpServer;
