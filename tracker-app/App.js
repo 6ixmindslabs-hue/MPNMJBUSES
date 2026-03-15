@@ -30,7 +30,7 @@ import {
 import io from 'socket.io-client';
 import { WebView } from 'react-native-webview';
 
-const BACKEND_URL = 'http://10.60.100.146:4000'; // Change to machine IP for physical devices
+const BACKEND_URL = 'https://mpnmjbuses.vercel.app';
 const Stack = createStackNavigator();
 
 // ── Components ─────────────────────────────────────────────────────────────
@@ -258,7 +258,9 @@ function LiveTrackScreen({ route, navigation }) {
   useEffect(() => {
     fetchRouteData();
     
-    socketRef.current = io(BACKEND_URL);
+    socketRef.current = io(BACKEND_URL, {
+      transports: ['polling']
+    });
     socketRef.current.emit('passenger:track', { busId });
     
     socketRef.current.on('bus:position', (state) => {

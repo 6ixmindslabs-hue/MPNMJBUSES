@@ -35,6 +35,12 @@
     },
     "ios": {
       "bundleIdentifier": "com.mpnmj.driverapp"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9d48d11e-8065-4f74-a2ab-0055fc1b7ba2"
+      }
+    },
+    "owner": "6ixmindslabs"
   }
 }
