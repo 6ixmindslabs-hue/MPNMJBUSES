@@ -1,0 +1,229 @@
+/* ── Root ─────────────────────────────────────────── */
+.top-bar {
+  display: flex;
+  align-items: center;
+  height: 64px;
+  flex: 0 0 64px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 0 16px;
+  gap: 0;
+  z-index: 1000;
+
+  /* Yellow gradient header — the signature accent */
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 60%, #d97706 100%);
+  border-bottom: 1px solid #d97706;
+}
+
+/* ── Left ─────────────────────────────────────────── */
+.tb-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.org-icon {
+  width: 30px;
+  height: 30px;
+  background: rgba(255,255,255,0.3);
+  border: 1.5px solid rgba(255,255,255,0.5);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+  color: #1c1917;
+  flex-shrink: 0;
+}
+
+.org-details {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.org-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: #1c1917;
+  white-space: nowrap;
+}
+
+.org-sub {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(28, 25, 23, 0.65);
+  white-space: nowrap;
+}
+
+/* ── Center ───────────────────────────────────────── */
+.tb-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 8px;
+}
+
+.tb-metrics {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.kpi-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid rgba(255,255,255,0.55);
+  border-radius: 8px;
+  padding: 0 12px;
+  height: 34px;
+  flex-shrink: 1;
+  min-width: 0;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+
+.kpi-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kpi-lbl {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(28, 25, 23, 0.75);
+  font-weight: 700;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kpi-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+/* Status dot fills */
+.kpi-dot.healthy  { background: #16a34a; }
+.kpi-dot.warning  { background: #92400e; }
+.kpi-dot.critical { background: #dc2626; }
+.kpi-dot.offline  { background: rgba(28,25,23,0.35); }
+
+/* Status text colours */
+.kpi-val.healthy  { color: #14532d; }
+.kpi-val.warning  { color: #78350f; }
+.kpi-val.critical { color: #991b1b; }
+.kpi-val.offline  { color: rgba(28,25,23,0.5); }
+
+/* ── Right ────────────────────────────────────────── */
+.tb-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.sys-hz {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: rgba(28, 25, 23, 0.75);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sys-hz-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #16a34a;
+  flex-shrink: 0;
+}
+
+.sys-time {
+  font-size: 12px;
+  color: rgba(28, 25, 23, 0.75);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tb-sep {
+  width: 1px;
+  height: 18px;
+  background: rgba(255,255,255,0.4);
+  flex-shrink: 0;
+}
+
+.avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.4);
+  border: 1.5px solid rgba(255,255,255,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 11px;
+  color: #1c1917;
+  flex-shrink: 0;
+}
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #1c1917;
+  cursor: pointer;
+  padding: 8px;
+  margin-left: -8px;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: flex;
+  }
+  
+  .tb-center {
+    display: none; /* Hide metrics on small mobile */
+  }
+
+  .org-details {
+    display: none; /* Only show icon on mobile */
+  }
+
+  .sys-hz, .tb-sep:nth-of-type(1) {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .sys-time, .tb-sep {
+    display: none;
+  }
+}

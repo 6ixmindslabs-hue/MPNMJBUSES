@@ -1,0 +1,47 @@
+{
+  "drivers": [
+    {
+      "name": "BUS11",
+      "login": "driver_01",
+      "password": "9445767807",
+      "createdAt": "2026-03-14T16:55:37.634Z"
+    }
+  ],
+  "buses": [
+    {
+      "busId": "bus11",
+      "status": "IDLE",
+      "registeredAt": "2026-03-14T16:55:43.643Z"
+    }
+  ],
+  "routes": [
+    {
+      "routeId": "bus11",
+      "name": "erode to mpnmj",
+      "stops": [
+        {
+          "name": "palayapalayam",
+          "lat": 11.329504,
+          "lng": 77.697857,
+          "arrivalTime": "08:45"
+        },
+        {
+          "name": "mpnmjec",
+          "lat": 11.187023,
+          "lng": 77.622764,
+          "arrivalTime": "09:20"
+        }
+      ],
+      "createdAt": "2026-03-14T16:57:29.632Z"
+    }
+  ],
+  "assignments": [
+    {
+      "busId": "bus11",
+      "driverId": "driver_01",
+      "routeId": "bus11",
+      "shiftDirection": "INBOUND",
+      "updatedAt": "2026-03-14T16:58:45.180Z"
+    }
+  ]
+}

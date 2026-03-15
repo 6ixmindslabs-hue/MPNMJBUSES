@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "driver-app",
+    "slug": "driver-app",
+    "version": "1.0.0",
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Captain App to use your location.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.mpnmj.driverapp",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.mpnmj.driverapp"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cbf07234-99ad-41c7-af6d-44af13a27137"
+      }
+    }
+  }
+}
