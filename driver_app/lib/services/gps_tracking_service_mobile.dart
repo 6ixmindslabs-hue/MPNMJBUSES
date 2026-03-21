@@ -18,9 +18,12 @@ class GpsTaskHandler extends TaskHandler {
   StreamSubscription<Position>? _positionSubscription;
   Position? _lastPosition;
   final WsTrackingService _wsTrackingService = WsTrackingService();
+  DateTime? _lastConnectAttemptAt;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    await _wsTrackingService.connectFromPersistedSession();
+
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 0,
@@ -59,7 +62,18 @@ class GpsTaskHandler extends TaskHandler {
       'accuracy': pos.accuracy,
     };
 
-    _wsTrackingService.sendGps(gpsPayload);
+    if (_wsTrackingService.state != WsConnectionState.ready) {
+      final now = DateTime.now();
+      final canRetry = _lastConnectAttemptAt == null ||
+          now.difference(_lastConnectAttemptAt!).inSeconds >=
+              (AppConfig.wsReconnectDelayMs ~/ 1000);
+      if (canRetry) {
+        _lastConnectAttemptAt = now;
+        unawaited(_wsTrackingService.connectFromPersistedSession());
+      }
+    }
+
+    unawaited(_wsTrackingService.sendGps(gpsPayload));
   }
 
   @override
@@ -91,7 +105,25 @@ class GpsTrackingService {
   static Future<void> initForegroundTask() async {
     if (kIsWeb) return;
 
-    // Initialization is now handled in main.dart and startTracking.
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'mpnmjec_tracking_channel',
+        channelName: 'MPNMJEC Bus Tracking',
+        channelDescription: 'Active trip GPS tracking',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(5000),
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
   }
 
   /// Start GPS tracking
@@ -116,27 +148,13 @@ class GpsTrackingService {
       return false;
     }
 
+    // Ensure initialization is done (just in case)
+    await initForegroundTask();
+
     final result = await FlutterForegroundTask.startService(
       notificationTitle: 'MPNMJEC Bus Tracking Active',
       notificationText: 'Your trip is being tracked. Tap to open.',
       callback: startCallback,
-      androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'mpnmjec_tracking_channel',
-        channelName: 'MPNMJEC Bus Tracking',
-        channelDescription: 'Active trip GPS tracking',
-        channelImportance: NotificationChannelImportance.LOW,
-        priority: NotificationPriority.LOW,
-      ),
-      iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: true,
-        playSound: false,
-      ),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(5000),
-        autoRunOnBoot: false,
-        allowWakeLock: true,
-        allowWifiLock: true,
-      ),
     );
 
     if (result is ServiceRequestFailure) {

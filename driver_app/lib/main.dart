@@ -5,10 +5,13 @@ import 'services/foreground_task_proxy.dart';
 
 import 'screens/login_screen.dart';
 import 'screens/trip_screen.dart';
+import 'services/gps_tracking_service_mobile.dart';
 import 'services/auth_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await GpsTrackingService.initForegroundTask();
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 

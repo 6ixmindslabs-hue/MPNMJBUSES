@@ -34,6 +34,14 @@ app.get('/', (req, res) => {
   `);
 });
 
+app.get('/api', (req, res) => {
+  res.status(200).json({ status: 'active', message: 'MPNMJEC Tracking API is running. Use specific endpoints (e.g. /api/routes).' });
+});
+
+app.get('/ws', (req, res) => {
+  res.status(400).send('This is a WebSocket endpoint. Please connect using a WebSocket client (ws:// or wss://) instead of HTTP.');
+});
+
 app.use('/api', apiRouter);
 
 // 404 fallback

@@ -91,6 +91,11 @@ class _TripScreenState extends State<TripScreen> {
     final wsToken = await AuthService.getWsToken();
     if (wsToken == null) return;
 
+    await _wsService.persistTrackingSession(
+      wsToken: wsToken,
+      tripId: _trip!['id'].toString(),
+    );
+
     final started = await _gpsService.startTracking();
     if (!started) return;
 
@@ -117,13 +122,6 @@ class _TripScreenState extends State<TripScreen> {
         );
       }
 
-      final trackingStarted = await _gpsService.startTracking();
-      if (!trackingStarted) {
-        throw const DriverAuthException(
-          'Location permission denied. Cannot start tracking.',
-        );
-      }
-
       if ((_trip!['source'] ?? 'schedule') == 'schedule') {
         final startedTrip = await AuthService.startAssignedTrip(
           _trip!['schedule_id'].toString(),
@@ -135,6 +133,18 @@ class _TripScreenState extends State<TripScreen> {
           'status': startedTrip['status'] ?? 'started',
           'source': 'trip',
         };
+      }
+
+      await _wsService.persistTrackingSession(
+        wsToken: wsToken,
+        tripId: _trip!['id'].toString(),
+      );
+
+      final trackingStarted = await _gpsService.startTracking();
+      if (!trackingStarted) {
+        throw const DriverAuthException(
+          'Location permission denied. Cannot start tracking.',
+        );
       }
 
       final connected = await _wsService.connect(
@@ -219,6 +229,7 @@ class _TripScreenState extends State<TripScreen> {
       await _gpsService.stopTracking();
       _wsService.disconnect();
       await OfflineGpsBuffer.clear();
+      await _wsService.clearPersistedTrackingSession();
 
       if (!mounted) return;
 
@@ -241,6 +252,7 @@ class _TripScreenState extends State<TripScreen> {
     await _gpsService.stopTracking();
     _wsService.disconnect();
     await OfflineGpsBuffer.clear();
+    await _wsService.clearPersistedTrackingSession();
     await AuthService.signOut();
 
     if (!mounted) return;

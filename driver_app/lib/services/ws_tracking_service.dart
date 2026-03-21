@@ -1,6 +1,7 @@
 // lib/services/ws_tracking_service.dart
 import 'dart:async';
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 import '../config/constants.dart';
@@ -29,6 +30,7 @@ class WsTrackingService {
 
   String? _wsToken;
   String? _tripId;
+  static const String _trackingSessionKey = 'driver_tracking_session';
 
   // Callbacks
   Function(WsConnectionState)? onStateChange;
@@ -49,7 +51,7 @@ class WsTrackingService {
     _wsToken = wsToken;
     _tripId = tripId;
     _allowReconnect = true;
-    _authCompleter ??= Completer<bool>();
+    _authCompleter = Completer<bool>();
     await _doConnect();
 
     try {
@@ -70,6 +72,12 @@ class WsTrackingService {
 
     try {
       _channel = WebSocketChannel.connect(Uri.parse(AppConfig.trackingWsUrl));
+      _channel!.stream.listen(
+        _onMessage,
+        onError: _onError,
+        onDone: _onDone,
+        cancelOnError: false,
+      );
 
       _setState(WsConnectionState.authenticating);
 
@@ -78,13 +86,6 @@ class WsTrackingService {
         'type': 'AUTH',
         'payload': {'token': _wsToken, 'tripId': _tripId}
       });
-
-      _channel!.stream.listen(
-        _onMessage,
-        onError: _onError,
-        onDone: _onDone,
-        cancelOnError: false,
-      );
 
       // Start heartbeat
       _heartbeatTimer?.cancel();
@@ -183,6 +184,40 @@ class WsTrackingService {
 
     _sendRaw({'type': 'BATCH', 'payload': {'points': points}});
     await OfflineGpsBuffer.clear();
+  }
+
+  Future<void> persistTrackingSession({
+    required String wsToken,
+    required String tripId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _trackingSessionKey,
+      jsonEncode({'wsToken': wsToken, 'tripId': tripId}),
+    );
+  }
+
+  Future<void> clearPersistedTrackingSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_trackingSessionKey);
+  }
+
+  Future<bool> connectFromPersistedSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_trackingSessionKey);
+    if (raw == null || raw.isEmpty) return false;
+
+    try {
+      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final wsToken = decoded['wsToken']?.toString();
+      final tripId = decoded['tripId']?.toString();
+      if (wsToken == null || wsToken.isEmpty || tripId == null || tripId.isEmpty) {
+        return false;
+      }
+      return await connect(wsToken, tripId);
+    } catch (_) {
+      return false;
+    }
   }
 
   void disconnect() {
