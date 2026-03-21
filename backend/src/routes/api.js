@@ -435,7 +435,7 @@ router.get('/trips/active', async (req, res) => {
       completed_at,
       schedules:schedule_id (
         id, start_time, end_time, schedule_type,
-        routes:route_id (id, route_name, start_location, end_location, polyline),
+        routes:route_id (id, route_name, start_location, end_location),
         buses:bus_id (id, bus_number, bus_name),
         drivers:driver_id (id, name, phone)
       )
