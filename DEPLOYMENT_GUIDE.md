@@ -63,11 +63,11 @@ Vercel is great for the React dashboard.
 Once the services are deployed, you need to link them:
 
 ### A. Link Admin to Backend
-1.  Find the URL of your **Backend Tracking Server** (e.g., `https://mpnmjec-tracking-server.onrender.com`).
+1.  Find the URL of your **Backend Tracking Server**: `https://mpnmjec-trackingserver.onrender.com`
 2.  Go to the **Admin Panel** settings on Render > **Environment**.
 3.  Update these variables:
-    *   `VITE_TRACKING_API_URL`: `https://your-backend-url.onrender.com/api`
-    *   `VITE_TRACKING_WS_URL`: `wss://your-backend-url.onrender.com/ws` (Note the `wss://`)
+    *   `VITE_TRACKING_API_URL`: `https://mpnmjec-trackingserver.onrender.com/api`
+    *   `VITE_TRACKING_WS_URL`: `wss://mpnmjec-trackingserver.onrender.com/ws` (Note the `wss://`)
 4.  Save changes. Render will rebuild the admin panel.
 
 ### B. Secure the Backend (CORS)
@@ -79,4 +79,8 @@ Once the services are deployed, you need to link them:
 ---
 
 ## 4. Testing the Apps
-Once deployed, update the `lib/config/constants.dart` (or equivalent) in your Flutter apps with the new production URLs and rebuild the apps.
+Once deployed, the `lib/config/constants.dart` files in your Flutter apps have already been updated with:
+*   API: `https://mpnmjec-trackingserver.onrender.com/api`
+*   WS: `wss://mpnmjec-trackingserver.onrender.com/ws`
+
+Simply rebuild your APKs and they will connect to production automatically!

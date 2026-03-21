@@ -2,12 +2,12 @@
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
-  static String get apiBase => 'http://localhost:3001/api';
-  static String get wsBase => 'ws://localhost:3001/ws';
+  static String get apiBase => 'https://mpnmjec-trackingserver.onrender.com/api';
+  static String get wsBase => 'wss://mpnmjec-trackingserver.onrender.com/ws';
 
-  // For Android Emulator to access local host
-  static String get effectiveApiBase => kIsWeb ? apiBase : (defaultTargetPlatform == TargetPlatform.android ? 'http://10.0.2.2:3001/api' : apiBase);
-  static String get effectiveWsBase => kIsWeb ? wsBase : (defaultTargetPlatform == TargetPlatform.android ? 'ws://10.0.2.2:3001/ws' : wsBase);
+  // Production Ready Environment
+  static String get effectiveApiBase => apiBase;
+  static String get effectiveWsBase => wsBase;
 
   // App Settings
   static const int refreshIntervalMs = 2000;

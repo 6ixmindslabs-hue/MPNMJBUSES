@@ -8,41 +8,34 @@ class AppConfig {
       return override.endsWith('/api') ? override : '$override/api';
     }
 
-    if (kReleaseMode) {
-      // TODO: Replace with your actual production backend URL
-      return 'https://your-backend.com/api';
+    if (kReleaseMode || !kIsWeb) {
+      return 'https://mpnmjec-trackingserver.onrender.com/api';
     }
 
     if (kIsWeb) {
       final host = Uri.base.host.isEmpty ? 'localhost' : Uri.base.host;
-      return 'http://$host:3001/api';
+      if (host != 'localhost') return 'https://mpnmjec-trackingserver.onrender.com/api';
+      return 'http://localhost:3001/api';
     }
 
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.android => 'http://10.0.2.2:3001/api',
-      _ => 'http://localhost:3001/api',
-    };
+    return 'https://mpnmjec-trackingserver.onrender.com/api';
   }
 
   static String get trackingWsUrl {
     const override = String.fromEnvironment('TRACKING_WS_URL', defaultValue: '');
     if (override.isNotEmpty) return override;
 
-    if (kReleaseMode) {
-      // TODO: Replace with your actual production WebSocket URL
-      return 'wss://your-backend.com/ws';
+    if (kReleaseMode || !kIsWeb) {
+      return 'wss://mpnmjec-trackingserver.onrender.com/ws';
     }
 
     if (kIsWeb) {
       final host = Uri.base.host.isEmpty ? 'localhost' : Uri.base.host;
-      final scheme = Uri.base.scheme == 'https' ? 'wss' : 'ws';
-      return '$scheme://$host:3001/ws';
+      if (host != 'localhost') return 'wss://mpnmjec-trackingserver.onrender.com/ws';
+      return 'ws://localhost:3001/ws';
     }
 
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.android => 'ws://10.0.2.2:3001/ws',
-      _ => 'ws://localhost:3001/ws',
-    };
+    return 'wss://mpnmjec-trackingserver.onrender.com/ws';
   }
 
   // Tracking settings
