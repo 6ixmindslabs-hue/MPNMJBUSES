@@ -1,0 +1,43 @@
+# Render Blueprint for MPNMJEC Bus Tracking System
+services:
+  # 1. Backend Tracking Server (Node.js)
+  - type: web
+    name: mpnmjec-tracking-server
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node index.js
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "*" # Can be restricted after admin is deployed
+      - key: NODE_ENV
+        value: production
+
+  # 2. Admin Web Dashboard (Static Site)
+  - type: web
+    name: mpnmjec-admin-panel
+    env: static
+    rootDir: admin
+    buildCommand: npm install && npm run build
+    publishDir: dist
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_TRACKING_API_URL
+        sync: false # Set this to the URL of the tracking server above after deploy
+      - key: VITE_TRACKING_WS_URL
+        sync: false # Set this to the WSS URL of the tracking server above after deploy

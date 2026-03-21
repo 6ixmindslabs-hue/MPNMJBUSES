@@ -1,0 +1,29 @@
+name: driver_app
+description: MPNMJEC Driver App - Trip management and GPS tracking
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  geolocator: ^11.0.0
+  permission_handler: ^11.3.0
+  shared_preferences: ^2.2.3
+  http: ^1.2.1
+  web_socket_channel: ^3.0.0
+  flutter_foreground_task: ^8.4.1
+  cupertino_icons: ^1.0.6
+  flutter_secure_storage: ^10.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  mockito: ^5.4.4
+  build_runner: ^2.4.9
+
+flutter:
+  uses-material-design: true

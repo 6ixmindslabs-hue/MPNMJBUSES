@@ -1,0 +1,3 @@
+
+Running Gradle task 'assembleRelease'...                        Terminate batch job (Y/N)? 
+^C
