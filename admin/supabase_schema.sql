@@ -164,3 +164,53 @@ CREATE INDEX IF NOT EXISTS idx_trips_status ON public.trips(status);
 CREATE INDEX IF NOT EXISTS idx_trips_schedule_id ON public.trips(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_trip_id ON public.telemetry(trip_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON public.telemetry(timestamp DESC);
+
+-- ============================================================
+-- CONCURRENCY-SAFE ACTIVE TRIP GUARDS
+-- Enforces: 1 driver + 1 bus = 1 active trip at a time
+-- ============================================================
+
+-- Partial unique indexes prevent duplicate active trips under race conditions.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_driver
+ON public.trips(driver_id)
+WHERE status IN ('started', 'running', 'paused');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_bus
+ON public.trips(bus_id)
+WHERE status IN ('started', 'running', 'paused');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_schedule
+ON public.trips(schedule_id)
+WHERE status IN ('started', 'running', 'paused');
+
+-- Prevent creating/updating schedules for a driver/bus that is already in an active trip.
+CREATE OR REPLACE FUNCTION public.prevent_schedule_conflict_with_active_trip()
+RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.driver_id = NEW.driver_id
+      AND t.status IN ('started', 'running', 'paused')
+  ) THEN
+    RAISE EXCEPTION 'Selected driver already has an active trip.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.trips t
+    WHERE t.bus_id = NEW.bus_id
+      AND t.status IN ('started', 'running', 'paused')
+  ) THEN
+    RAISE EXCEPTION 'Selected bus already has an active trip.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_schedule_conflict ON public.schedules;
+CREATE TRIGGER trg_prevent_schedule_conflict
+BEFORE INSERT OR UPDATE ON public.schedules
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_schedule_conflict_with_active_trip();

@@ -3,9 +3,12 @@ import { supabase } from '../lib/supabase';
 import { Map, Calendar, Clock, UserCheck, Play, Pause, Square, AlertCircle, RefreshCw, Sun, Moon, ArrowRight, User, Hash } from 'lucide-react';
 import { format } from 'date-fns';
 
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+
 const TripManager = () => {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTripMeta, setActiveTripMeta] = useState({});
   
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState(null);
@@ -16,6 +19,7 @@ const TripManager = () => {
   useEffect(() => {
     fetchTrips();
     fetchResources();
+    fetchActiveTripMeta();
     
     const channel = supabase
       .channel('trips_status_updates')
@@ -34,7 +38,32 @@ const TripManager = () => {
       .limit(50);
       
     if (data) setTrips(data);
+    fetchActiveTripMeta();
     setLoading(false);
+  };
+
+  const fetchActiveTripMeta = async () => {
+    try {
+      const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
+      if (!response.ok) return;
+      const activeTrips = await response.json();
+
+      const metaByTripId = {};
+      for (const trip of activeTrips) {
+        metaByTripId[trip.id] = {
+          trip_id: trip.id,
+          is_online: !!trip.is_online,
+          eta_minutes: trip.eta_minutes,
+          delay_status: trip.delay_status,
+          delay_minutes: trip.delay_minutes,
+          driver_id: trip.schedules?.drivers?.id || trip.driver_id,
+          bus_id: trip.schedules?.buses?.id || trip.bus_id,
+        };
+      }
+      setActiveTripMeta(metaByTripId);
+    } catch {
+      // Keep stale snapshot until next successful refresh.
+    }
   };
 
   const fetchResources = async () => {
@@ -52,6 +81,19 @@ const TripManager = () => {
   };
 
   const handleAssignTrip = async () => {
+    const runningTrips = Object.values(activeTripMeta);
+    const driverBusy = runningTrips.find((t) => t.driver_id === assignForm.driver_id && t.trip_id !== selectedTrip.id);
+    const busBusy = runningTrips.find((t) => t.bus_id === assignForm.bus_id && t.trip_id !== selectedTrip.id);
+
+    if (driverBusy) {
+      alert('Selected driver already has an active trip.');
+      return;
+    }
+    if (busBusy) {
+      alert('Selected bus already has an active trip.');
+      return;
+    }
+
     const { error } = await supabase
       .from('trips')
       .update({ 
@@ -64,6 +106,7 @@ const TripManager = () => {
     if (!error) {
       setShowAssignModal(false);
       fetchTrips();
+      fetchActiveTripMeta();
     }
   };
 
@@ -116,6 +159,7 @@ const TripManager = () => {
         ) : trips.map((trip) => {
           const ui = getStatusUI(trip.status);
           const isMorning = trip.shift === 'morning';
+          const liveMeta = activeTripMeta[trip.id];
           
           return (
             <div key={trip.id} className="group bg-white rounded-[2.5rem] p-4 pr-10 border-2 border-slate-50 hover:border-indigo-100 shadow-premium transition-all flex flex-col lg:flex-row lg:items-center gap-8 relative overflow-hidden">
@@ -174,6 +218,16 @@ const TripManager = () => {
                      <div className={`w-2 h-2 rounded-full ${ui.dot}`}></div>
                      <span className="text-[10px] font-black uppercase tracking-widest">{ui.label}</span>
                   </div>
+                  {liveMeta && (
+                    <div className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest ${liveMeta.is_online ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                      {liveMeta.is_online ? 'ONLINE' : 'OFFLINE'}
+                    </div>
+                  )}
+                  {liveMeta && (
+                    <span className="text-[10px] font-bold text-slate-500">
+                      ETA {liveMeta.eta_minutes ?? '-'}m • {liveMeta.delay_status || 'On Time'}
+                    </span>
+                  )}
                   {trip.actual_start_time && (
                       <span className="text-[10px] font-bold text-slate-400">Live since {format(new Date(trip.actual_start_time), 'HH:mm')}</span>
                   )}
@@ -268,7 +322,5 @@ const TripManager = () => {
     </div>
   );
 };
-
-export default TripManager;
 
 export default TripManager;

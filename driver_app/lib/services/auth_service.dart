@@ -155,7 +155,9 @@ class AuthService {
     final payload = _decodeJsonObject(response.body);
     if (response.statusCode != 200) {
       throw DriverAuthException(
-        payload['error']?.toString() ?? 'Could not start tracking',
+        payload['message']?.toString() ??
+            payload['error']?.toString() ??
+            'Could not start tracking',
       );
     }
 

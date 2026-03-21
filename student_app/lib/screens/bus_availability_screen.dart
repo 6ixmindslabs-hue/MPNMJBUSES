@@ -199,13 +199,21 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF475569), fontSize: 13),
                     ),
                   ),
-                  const Row(
+                  Row(
                     children: [
-                      Icon(LucideIcons.zap, size: 14, color: Colors.green),
-                      SizedBox(width: 4),
+                      Icon(
+                        LucideIcons.zap,
+                        size: 14,
+                        color: (trip['is_online'] == true) ? Colors.green : Colors.red,
+                      ),
+                      const SizedBox(width: 4),
                       Text(
-                        'LIVE',
-                        style: TextStyle(fontWeight: FontWeight.w900, color: Colors.green, fontSize: 12),
+                        (trip['is_online'] == true) ? 'ONLINE' : 'OFFLINE',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: (trip['is_online'] == true) ? Colors.green : Colors.red,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -235,8 +243,12 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'On Time',
-                        style: TextStyle(fontWeight: FontWeight.w800, color: Colors.blue.shade700, fontSize: 15),
+                        (trip['delay_status'] ?? 'On Time').toString(),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: (trip['delay_status'] == 'Delayed') ? Colors.red.shade700 : Colors.blue.shade700,
+                          fontSize: 15,
+                        ),
                       ),
                     ],
                   ),

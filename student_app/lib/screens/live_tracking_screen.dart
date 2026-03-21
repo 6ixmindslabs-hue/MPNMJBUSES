@@ -93,7 +93,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
           _busLocation = newLoc;
           _lastTelemetry = data;
           _lastUpdatedAt = DateTime.now();
-          _locationError = null;
+          _locationError = data['is_online'] == false
+              ? 'Bus is currently offline (no recent GPS updates).'
+              : null;
           _loadingLocation = false;
         });
 

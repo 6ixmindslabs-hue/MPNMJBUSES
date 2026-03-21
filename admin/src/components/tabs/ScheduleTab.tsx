@@ -7,6 +7,8 @@ import { TableSkeleton } from '../ui/Skeleton';
 import { ConfirmModal } from '../ui/Modal';
 import { Calendar, Clock, UserCheck, Trash2, Edit2, Link as LinkIcon, Compass, Activity, Sun, Moon, SearchX, ChevronLeft, ChevronRight } from 'lucide-react';
 
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+
 const ScheduleTab = () => {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -47,6 +49,17 @@ const ScheduleTab = () => {
     const { id, created_at, ...updateData } = data as any;
     
     try {
+      const validationRes = await fetch(`${TRACKING_API_BASE}/schedules/validate-assignment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driver_id: data.driver_id, bus_id: data.bus_id }),
+      });
+
+      if (!validationRes.ok) {
+        const payload = await validationRes.json().catch(() => ({}));
+        throw new Error(payload.message || payload.error || 'Selected driver/bus is already in an active trip');
+      }
+
       if (editingId) {
         const { error } = await supabase.from('schedules').update(updateData).eq('id', editingId);
         if (error) throw error;

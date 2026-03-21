@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Bus, Settings, Plus, Search, MapPin, MoreVertical, Trash2, Edit2, Shield, Users as UsersIcon, Fuel } from 'lucide-react';
 
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+
 const FleetManagement = () => {
   const [buses, setBuses] = useState([]);
+  const [liveTripByBus, setLiveTripByBus] = useState({});
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -11,6 +14,7 @@ const FleetManagement = () => {
 
   useEffect(() => {
     fetchBuses();
+    fetchLiveTripStates();
   }, []);
 
   const fetchBuses = async () => {
@@ -21,6 +25,28 @@ const FleetManagement = () => {
     
     if (data) setBuses(data);
     setLoading(false);
+  };
+
+  const fetchLiveTripStates = async () => {
+    try {
+      const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
+      if (!response.ok) return;
+      const trips = await response.json();
+      const nextMap = {};
+      for (const trip of trips) {
+        const busId = trip?.schedules?.buses?.id;
+        if (!busId) continue;
+        nextMap[busId] = {
+          is_online: !!trip.is_online,
+          last_seen_at: trip.last_seen_at,
+          delay_status: trip.delay_status,
+          eta_minutes: trip.eta_minutes,
+        };
+      }
+      setLiveTripByBus(nextMap);
+    } catch {
+      // Ignore transient failures; fleet table still renders from Supabase.
+    }
   };
 
   const handleAddBus = async (e) => {
@@ -121,6 +147,10 @@ const FleetManagement = () => {
                 <tr><td colSpan="5" className="px-8 py-20 text-center text-slate-400 font-medium italic">No transport units match your search.</td></tr>
               ) : (
                 filteredBuses.map((bus) => (
+                  (() => {
+                    const liveState = liveTripByBus[bus.id];
+                    const isOnline = liveState ? liveState.is_online : null;
+                    return (
                   <tr key={bus.id} className="hover:bg-teal-50/20 transition-all group">
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-4">
@@ -164,6 +194,14 @@ const FleetManagement = () => {
                             {bus.status}
                           </span>
                         </div>
+                        {isOnline !== null && (
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                            <span className={`text-[10px] font-black uppercase tracking-widest ${isOnline ? 'text-green-700' : 'text-red-700'}`}>
+                              {isOnline ? 'online' : 'offline'}
+                            </span>
+                          </div>
+                        )}
                         <div className="h-1 w-24 bg-slate-100 rounded-full overflow-hidden mt-1">
                            <div className={`h-full ${bus.status === 'active' ? 'w-[95%] bg-emerald-500' : 'w-[45%] bg-amber-500'}`}></div>
                         </div>
@@ -176,6 +214,8 @@ const FleetManagement = () => {
                       </div>
                     </td>
                   </tr>
+                    );
+                  })()
                 ))
               )}
             </tbody>

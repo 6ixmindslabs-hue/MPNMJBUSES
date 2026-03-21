@@ -22,6 +22,7 @@
 const WebSocket = require('ws');
 const jwt = require('jsonwebtoken');
 const { supabaseAdmin } = require('../config/supabase');
+const { ACTIVE_TRIP_STATUSES } = require('../config/tripRules');
 
 // Map of websocket → { tripId, driverId, authenticated, scheduleType }
 const clientMeta = new WeakMap();
@@ -73,9 +74,12 @@ function setupWebSocketServer(server) {
             return ws.send(JSON.stringify({ type: 'AUTH_ERR', payload: { reason: 'trip_not_found' } }));
           }
 
-          const activeStatuses = ['started', 'running', 'paused'];
-          if (!activeStatuses.includes(trip.status)) {
+          if (!ACTIVE_TRIP_STATUSES.includes(trip.status)) {
             return ws.send(JSON.stringify({ type: 'AUTH_ERR', payload: { reason: 'trip_not_active' } }));
+          }
+
+          if (driverId !== 'dev-driver' && trip.driver_id !== driverId) {
+            return ws.send(JSON.stringify({ type: 'AUTH_ERR', payload: { reason: 'trip_driver_mismatch' } }));
           }
 
           // Fetch stops for this route + shift for ETA calculations

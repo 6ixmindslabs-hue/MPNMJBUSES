@@ -12,7 +12,8 @@
 const express = require('express');
 const router = express.Router();
 const { supabaseAdmin } = require('../config/supabase');
-const ACTIVE_TRIP_STATUSES = ['started', 'running', 'paused'];
+const { ACTIVE_TRIP_STATUSES } = require('../config/tripRules');
+const { buildLiveTripMeta, isTelemetryOnline } = require('../services/tripLiveService');
 
 // ─── Auth Middleware ────────────────────────────────────────────────────────
 // Verifies driver credentials from the 'drivers' table using username+password.
@@ -85,6 +86,100 @@ function normalizeDriverAssignment({
     buses: normalizeBus(buses),
     source,
   };
+}
+
+async function findActiveTripConflicts({ driverId, busId }) {
+  let query = supabaseAdmin
+    .from('trips')
+    .select('id, schedule_id, driver_id, bus_id, status, started_at')
+    .in('status', ACTIVE_TRIP_STATUSES)
+    .order('started_at', { ascending: false })
+    .limit(5);
+
+  if (driverId && busId) {
+    query = query.or(`driver_id.eq.${driverId},bus_id.eq.${busId}`);
+  } else if (driverId) {
+    query = query.eq('driver_id', driverId);
+  } else if (busId) {
+    query = query.eq('bus_id', busId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+function buildTripConflictMessage(conflicts, { driverId, busId }) {
+  const driverConflict = conflicts.find((trip) => trip.driver_id === driverId);
+  const busConflict = conflicts.find((trip) => trip.bus_id === busId);
+
+  if (driverConflict && busConflict) {
+    return {
+      code: 'DRIVER_AND_BUS_BUSY',
+      message: 'Selected driver and bus are already in active trips.',
+      driver_trip_id: driverConflict.id,
+      bus_trip_id: busConflict.id,
+    };
+  }
+  if (driverConflict) {
+    return {
+      code: 'DRIVER_BUSY',
+      message: 'Driver already has an active trip. End that trip before starting a new one.',
+      driver_trip_id: driverConflict.id,
+    };
+  }
+  if (busConflict) {
+    return {
+      code: 'BUS_BUSY',
+      message: 'Bus already has an active trip. End that trip before starting a new one.',
+      bus_trip_id: busConflict.id,
+    };
+  }
+  return null;
+}
+
+async function fetchLatestTelemetryByTripIds(tripIds) {
+  if (!tripIds.length) return {};
+
+  const { data, error } = await supabaseAdmin
+    .from('telemetry')
+    .select('trip_id, latitude, longitude, speed, heading, timestamp')
+    .in('trip_id', tripIds)
+    .order('timestamp', { ascending: false });
+
+  if (error) throw error;
+
+  const map = {};
+  for (const row of data || []) {
+    if (!map[row.trip_id]) {
+      map[row.trip_id] = row;
+    }
+  }
+  return map;
+}
+
+async function fetchStopsByRouteShiftPairs(trips) {
+  const keyToStops = {};
+  const pairs = new Map();
+  for (const trip of trips) {
+    const routeId = trip.schedules?.routes?.id;
+    const shift = trip.schedule_type;
+    if (!routeId || !shift) continue;
+    const key = `${routeId}::${shift}`;
+    pairs.set(key, { routeId, shift });
+  }
+
+  for (const [, pair] of pairs) {
+    const { data } = await supabaseAdmin
+      .from('stops')
+      .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
+      .eq('route_id', pair.routeId)
+      .eq('schedule_type', pair.shift)
+      .order('arrival_time', { ascending: true });
+    keyToStops[`${pair.routeId}::${pair.shift}`] = data || [];
+  }
+
+  return keyToStops;
 }
 
 async function fetchCurrentDriverAssignment(driverId) {
@@ -296,6 +391,32 @@ router.get('/schedules', async (req, res) => {
   res.json(data);
 });
 
+// POST /api/schedules/validate-assignment
+// UX validation for admin before creating/updating a schedule.
+router.post('/schedules/validate-assignment', async (req, res) => {
+  const { driver_id, bus_id } = req.body || {};
+  if (!driver_id || !bus_id) {
+    return res.status(400).json({ error: 'driver_id and bus_id are required' });
+  }
+
+  try {
+    const conflicts = await findActiveTripConflicts({
+      driverId: driver_id,
+      busId: bus_id,
+    });
+    const conflictPayload = buildTripConflictMessage(conflicts, {
+      driverId: driver_id,
+      busId: bus_id,
+    });
+    if (conflictPayload) {
+      return res.status(409).json(conflictPayload);
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Validation failed' });
+  }
+});
+
 // ─── TRIPS (active live trips for student app tracking) ─────────────────────
 // GET /api/trips/active — returns all currently active trips with live bus info
 router.get('/trips/active', async (req, res) => {
@@ -310,7 +431,7 @@ router.get('/trips/active', async (req, res) => {
       completed_at,
       schedules:schedule_id (
         id, start_time, end_time, schedule_type,
-        routes:route_id (id, start_location, end_location),
+        routes:route_id (id, route_name, start_location, end_location, polyline),
         buses:bus_id (id, bus_number, bus_name),
         drivers:driver_id (id, name, phone)
       )
@@ -319,7 +440,32 @@ router.get('/trips/active', async (req, res) => {
     .order('started_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  try {
+    const trips = data || [];
+    const tripIds = trips.map((trip) => trip.id);
+    const telemetryMap = await fetchLatestTelemetryByTripIds(tripIds);
+    const stopsMap = await fetchStopsByRouteShiftPairs(trips);
+
+    const enriched = trips.map((trip) => {
+      const routeId = trip.schedules?.routes?.id;
+      const key = routeId ? `${routeId}::${trip.schedule_type}` : '';
+      const latestTelemetry = telemetryMap[trip.id] || null;
+      const liveMeta = buildLiveTripMeta({
+        latestTelemetry,
+        stops: stopsMap[key] || [],
+      });
+
+      return {
+        ...trip,
+        latest_telemetry: latestTelemetry,
+        ...liveMeta,
+      };
+    });
+
+    res.json(enriched);
+  } catch (metricErr) {
+    res.status(500).json({ error: metricErr.message || 'Could not load active trips' });
+  }
 });
 
 // GET /api/trips/:id/last-location — latest GPS point for a trip
@@ -332,7 +478,12 @@ router.get('/trips/:id/last-location', async (req, res) => {
     .limit(1)
     .single();
   if (error) return res.status(404).json({ error: 'No telemetry found' });
-  res.json(data);
+  const isOnline = isTelemetryOnline(data.timestamp);
+  res.json({
+    ...data,
+    is_online: isOnline,
+    last_seen_at: data.timestamp,
+  });
 });
 
 // POST /api/trips — driver starts a trip (links to a schedule)
@@ -354,18 +505,29 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
     return res.status(403).json({ error: 'You are not assigned to this schedule' });
   }
 
-  const { data: existingTrip, error: existingTripErr } = await supabaseAdmin
-    .from('trips')
-    .select('id, schedule_id, status')
-    .eq('schedule_id', schedule_id)
-    .eq('driver_id', schedule.driver_id)
-    .in('status', ACTIVE_TRIP_STATUSES)
-    .order('started_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  try {
+    const conflicts = await findActiveTripConflicts({
+      driverId: schedule.driver_id,
+      busId: schedule.bus_id,
+    });
 
-  if (existingTripErr) return res.status(400).json({ error: existingTripErr.message });
-  if (existingTrip) return res.json(existingTrip);
+    const sameScheduleTrip = conflicts.find(
+      (trip) => trip.schedule_id === schedule_id
+    );
+    if (sameScheduleTrip) {
+      return res.json(sameScheduleTrip);
+    }
+
+    const conflictPayload = buildTripConflictMessage(conflicts, {
+      driverId: schedule.driver_id,
+      busId: schedule.bus_id,
+    });
+    if (conflictPayload) {
+      return res.status(409).json(conflictPayload);
+    }
+  } catch (conflictErr) {
+    return res.status(500).json({ error: conflictErr.message || 'Could not validate active trips' });
+  }
 
   // Create trip row
   const { data: trip, error: tripErr } = await supabaseAdmin
@@ -382,7 +544,21 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
     .select()
     .single();
 
-  if (tripErr) return res.status(400).json({ error: tripErr.message });
+  if (tripErr) {
+    // Unique partial indexes can still reject near-simultaneous requests.
+    if (tripErr.code === '23505') {
+      const conflicts = await findActiveTripConflicts({
+        driverId: schedule.driver_id,
+        busId: schedule.bus_id,
+      });
+      const conflictPayload = buildTripConflictMessage(conflicts, {
+        driverId: schedule.driver_id,
+        busId: schedule.bus_id,
+      });
+      if (conflictPayload) return res.status(409).json(conflictPayload);
+    }
+    return res.status(400).json({ error: tripErr.message });
+  }
   res.json(trip);
 });
 

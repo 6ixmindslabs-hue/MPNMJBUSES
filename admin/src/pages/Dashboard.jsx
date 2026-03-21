@@ -5,6 +5,8 @@ import 'leaflet/dist/leaflet.css';
 import { supabase } from '../lib/supabase';
 import { Bus, MapPin, Clock, Phone, AlertTriangle, Activity } from 'lucide-react';
 
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+
 // Fix Leaflet marker icons
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -18,10 +20,11 @@ const createBusIcon = (status) => {
     running: '#22c55e',
     paused: '#f59e0b',
     started: '#3b82f6',
+    offline: '#ef4444',
     default: '#94a3b8'
   };
   const color = colors[status] || colors.default;
-  
+
   return L.divIcon({
     html: `<div class="relative">
              <div class="pulsate-marker" style="background-color: ${color}; border-color: ${color}"></div>
@@ -40,7 +43,6 @@ const Dashboard = () => {
   useEffect(() => {
     fetchActiveTrips();
 
-    // Subscribe to trip updates
     const channel = supabase
       .channel('live-ops')
       .on('postgres_changes', { event: '*', table: 'trips' }, fetchActiveTrips)
@@ -53,26 +55,18 @@ const Dashboard = () => {
   }, []);
 
   const fetchActiveTrips = async () => {
-    const { data: trips } = await supabase
-      .from('trips')
-      .select(`
-        *,
-        buses(registration_number),
-        routes(name, polyline),
-        drivers:driver_id(users(full_name, phone_number)),
-        current_telemetry:telemetry(latitude, longitude, timestamp, speed, heading)
-      `)
-      .in('status', ['started', 'running', 'paused'])
-      .order('created_at', { foreignTable: 'telemetry', ascending: false })
-      .limit(1, { foreignTable: 'telemetry' });
-
-    if (trips) {
+    try {
+      const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
+      if (!response.ok) return;
+      const trips = await response.json();
       setActiveTrips(trips);
       setStats({
         active: trips.length,
-        delayed: trips.filter(t => (t.delay_minutes || 0) > 5).length,
-        incidents: 0 // Fetch from alerts table if needed
+        delayed: trips.filter((t) => t.delay_status === 'Delayed').length,
+        incidents: 0,
       });
+    } catch {
+      // Keep previous snapshot on transient API failures.
     }
   };
 
@@ -92,57 +86,63 @@ const Dashboard = () => {
 
       <div className="flex-1 grid grid-cols-4 gap-6 min-h-0">
         <div className="col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative map-container">
-          <MapContainer 
-            center={[12.9716, 77.5946]} // Default to Bangalore (Change as needed)
-            zoom={13} 
+          <MapContainer
+            center={[12.9716, 77.5946]}
+            zoom={13}
             className="h-full w-full"
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            {activeTrips.map(trip => {
-              const pos = trip.current_telemetry?.[0];
+            {activeTrips.map((trip) => {
+              const pos = trip.latest_telemetry;
               if (!pos) return null;
-              
+
               return (
                 <React.Fragment key={trip.id}>
-                  {trip.routes?.polyline && (
-                    <Polyline 
-                      positions={trip.routes.polyline} 
-                      color="#3b82f6" 
-                      weight={3} 
-                      opacity={0.3} 
-                      dashArray="5, 10" 
+                  {trip.schedules?.routes?.polyline && (
+                    <Polyline
+                      positions={trip.schedules.routes.polyline}
+                      color="#3b82f6"
+                      weight={3}
+                      opacity={0.3}
+                      dashArray="5, 10"
                     />
                   )}
-                  <Marker 
+                  <Marker
                     position={[pos.latitude, pos.longitude]}
-                    icon={createBusIcon(trip.status)}
+                    icon={createBusIcon(trip.is_online ? trip.status : 'offline')}
                   >
                     <Popup className="bus-popup">
                       <div className="p-1 min-w-[200px]">
                         <div className="flex justify-between items-start mb-2">
                           <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-bold">
-                            {trip.buses.registration_number}
+                            {trip.schedules?.buses?.bus_number || '-'}
                           </span>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white ${
-                            trip.status === 'running' ? 'bg-green-500' : 'bg-amber-500'
+                            trip.is_online ? 'bg-green-500' : 'bg-red-500'
                           }`}>
-                            {trip.status.toUpperCase()}
+                            {trip.is_online ? 'ONLINE' : 'OFFLINE'}
                           </span>
                         </div>
-                        <h4 className="font-bold text-slate-900 text-sm mb-1">{trip.routes.name}</h4>
+                        <h4 className="font-bold text-slate-900 text-sm mb-1">
+                          {trip.schedules?.routes?.start_location} to {trip.schedules?.routes?.end_location}
+                        </h4>
                         <div className="space-y-1.5 text-xs text-slate-600">
                           <div className="flex items-center gap-2">
                             <Clock size={14} className="text-slate-400" />
-                            <span>Delay: <b className={trip.delay_minutes > 5 ? 'text-red-500' : 'text-green-600'}>
-                              {trip.delay_minutes || 0} mins
+                            <span>ETA: <b className="text-slate-900">{trip.eta_minutes ?? '-'} mins</b></span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Clock size={14} className="text-slate-400" />
+                            <span>Delay: <b className={trip.delay_status === 'Delayed' ? 'text-red-500' : 'text-green-600'}>
+                              {trip.delay_status || 'On Time'}
                             </b></span>
                           </div>
                           <div className="flex items-center gap-2">
-                             <Phone size={14} className="text-slate-400" />
-                             <span>{trip.drivers.users.full_name}</span>
+                            <Phone size={14} className="text-slate-400" />
+                            <span>{trip.schedules?.drivers?.name || '-'}</span>
                           </div>
                         </div>
                       </div>
@@ -168,21 +168,25 @@ const Dashboard = () => {
                 <p className="text-sm italic">No active trips currently</p>
               </div>
             ) : (
-              activeTrips.map(trip => (
+              activeTrips.map((trip) => (
                 <div key={trip.id} className="p-3 rounded-xl border border-slate-100 hover:border-primary-100 hover:bg-primary-50/30 transition-all cursor-pointer group">
                   <div className="flex justify-between items-start mb-2">
-                    <span className="font-bold text-slate-900 truncate flex-1">{trip.routes.name}</span>
+                    <span className="font-bold text-slate-900 truncate flex-1">
+                      {trip.schedules?.routes?.start_location} to {trip.schedules?.routes?.end_location}
+                    </span>
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded shrink-0 ${
-                      trip.delay_minutes > 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+                      trip.delay_status === 'Delayed' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
                     }`}>
-                      {trip.delay_minutes > 0 ? `+${trip.delay_minutes}m` : 'ON TIME'}
+                      {trip.delay_status === 'Delayed' ? `+${trip.delay_minutes || 0}m` : 'ON TIME'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-slate-500">
                     <MapPin size={12} />
-                    <span className="truncate">{trip.buses.registration_number} â€¢ {trip.drivers.users.full_name}</span>
+                    <span className="truncate">
+                      {trip.schedules?.buses?.bus_number || '-'} • {trip.is_online ? 'Online' : 'Offline'}
+                    </span>
                   </div>
-                  {trip.delay_minutes > 10 && (
+                  {trip.delay_status === 'Delayed' && (
                     <div className="mt-2 flex items-center gap-1.5 text-[10px] text-red-600 font-bold bg-red-50 p-1.5 rounded-lg">
                       <AlertTriangle size={12} />
                       CRITICAL DELAY DETECTED
