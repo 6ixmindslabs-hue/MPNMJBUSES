@@ -39,7 +39,7 @@ app.get('/api', (req, res) => {
 });
 
 app.get('/ws', (req, res) => {
-  res.status(400).send('This is a WebSocket endpoint. Please connect using a WebSocket client (ws:// or wss://) instead of HTTP.');
+  res.status(200).send('This is a WebSocket endpoint. Please connect using a WebSocket client (ws:// or wss://) instead of HTTP.');
 });
 
 app.use('/api', apiRouter);
