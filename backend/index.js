@@ -21,6 +21,19 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+// Root check — Friendly message for humans
+app.get('/', (req, res) => {
+  res.status(200).send(`
+    <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;">
+      <h1 style="color: #6366f1;">🚌 MPNMJEC Tracking API</h1>
+      <p style="color: #6b7280;">Server is running in production mode.</p>
+      <div style="margin-top: 20px; padding: 10px; background: #f3f4f6; border-radius: 8px;">
+        <code>Status: ACTIVE</code>
+      </div>
+    </div>
+  `);
+});
+
 app.use('/api', apiRouter);
 
 // 404 fallback
