@@ -13,12 +13,12 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  // Local state for dropdowns
   List<Map<String, dynamic>> _stops = [];
   bool _loading = true;
+  String? _loadError;
   String? _fromStopId;
   String? _toStopId;
-  String _shift = 'morning'; // Default
+  String _shift = 'morning';
 
   @override
   void initState() {
@@ -27,6 +27,11 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _fetchStops() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
     try {
       final response = await http.get(Uri.parse('${AppConfig.effectiveApiBase}/stops'));
       if (response.statusCode == 200) {
@@ -35,21 +40,37 @@ class _SearchScreenState extends State<SearchScreen> {
           _stops = data.cast<Map<String, dynamic>>();
           _loading = false;
         });
+      } else {
+        setState(() {
+          _loading = false;
+          _loadError = 'Unable to load stops right now.';
+        });
       }
     } catch (e) {
       debugPrint('Error fetching stops: $e');
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = 'Network error while loading stops.';
+      });
     }
   }
 
   void _searchBuses() {
     if (_fromStopId == null || _toStopId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select both from and to stops')),
+        const SnackBar(content: Text('Select both pickup and destination stops.')),
       );
       return;
     }
 
-    // Find the shared route ID if any
+    if (_fromStopId == _toStopId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pickup and destination cannot be the same stop.')),
+      );
+      return;
+    }
+
     final fromStop = _stops.firstWhere((s) => s['id'] == _fromStopId);
     final toStop = _stops.firstWhere((s) => s['id'] == _toStopId);
 
@@ -71,13 +92,12 @@ class _SearchScreenState extends State<SearchScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // 🎨 Header Gradient
             Container(
               width: double.infinity,
               padding: const EdgeInsets.only(top: 80, left: 32, right: 32, bottom: 48),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                  colors: [Color(0xFFFACC15), Color(0xFFF59E0B)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -88,95 +108,137 @@ class _SearchScreenState extends State<SearchScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(LucideIcons.bus, color: Colors.white, size: 48),
+                  Row(
+                    children: [
+                      const Icon(LucideIcons.bus, color: Color(0xFF1E293B), size: 44),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: _loading ? null : _fetchStops,
+                        icon: const Icon(LucideIcons.refreshCw, color: Color(0xFF1E293B)),
+                        tooltip: 'Refresh stops',
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 24),
                   Text(
                     'Where are you\ngoing today?',
                     style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                      color: Colors.white,
-                      fontSize: 34,
-                      letterSpacing: -1,
-                      height: 1.1,
-                    ),
+                          color: const Color(0xFF1E293B),
+                          fontSize: 34,
+                          letterSpacing: -1,
+                          height: 1.1,
+                        ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
+                  const Text(
                     'Track your college bus live',
-                    style: TextStyle(color: Colors.blue.shade100, fontSize: 16),
+                    style: TextStyle(color: Color(0xFF334155), fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
             ),
-
-            // 📍 Selection Form
             Padding(
               padding: const EdgeInsets.all(24),
-              child: _loading 
-                ? const Center(child: CircularProgressIndicator())
-                : Column(
-                    children: [
-                      _buildSelectorCard(
-                        icon: LucideIcons.circleDot,
-                        iconColor: Colors.blue,
-                        label: 'SELECT PICKUP STOP',
-                        value: _fromStopId,
-                        onChanged: (val) => setState(() => _fromStopId = val),
-                      ),
-                      
-                      // 🔄 Swap Icon
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 4),
-                        child: Icon(LucideIcons.arrowDownUp, color: Color(0xFFCBD5E1), size: 18),
-                      ),
-
-                      _buildSelectorCard(
-                        icon: LucideIcons.mapPin,
-                        iconColor: Colors.red,
-                        label: 'SELECT DESTINATION',
-                        value: _toStopId,
-                        onChanged: (val) => setState(() => _toStopId = val),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // 🕙 Shift Toggle
-                      _buildShiftToggle(),
-
-                      const SizedBox(height: 48),
-
-                      // 🔎 Search Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 64,
-                        child: ElevatedButton(
-                          onPressed: _searchBuses,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF2563EB),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _loadError != null
+                      ? _buildErrorState()
+                      : Column(
+                          children: [
+                            _buildSelectorCard(
+                              icon: LucideIcons.circleDot,
+                              iconColor: Colors.blue,
+                              label: 'SELECT PICKUP STOP',
+                              value: _fromStopId,
+                              onChanged: (val) => setState(() => _fromStopId = val),
                             ),
-                            elevation: 8,
-                            shadowColor: const Color(0xFF2563EB).withOpacity(0.4),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(LucideIcons.search, size: 20),
-                              SizedBox(width: 12),
-                              Text(
-                                'FIND AVAILABLE BUSES',
-                                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 0.5),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: Icon(LucideIcons.arrowDownUp, color: Color(0xFFCBD5E1), size: 18),
+                            ),
+                            _buildSelectorCard(
+                              icon: LucideIcons.mapPin,
+                              iconColor: Colors.red,
+                              label: 'SELECT DESTINATION',
+                              value: _toStopId,
+                              onChanged: (val) => setState(() => _toStopId = val),
+                            ),
+                            const SizedBox(height: 16),
+                            _buildShiftToggle(),
+                            const SizedBox(height: 48),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 64,
+                              child: ElevatedButton(
+                                onPressed: _searchBuses,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFF59E0B),
+                                  foregroundColor: const Color(0xFF1E293B),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  elevation: 8,
+                                  shadowColor: const Color(0xFFF59E0B).withValues(alpha: 0.4),
+                                ),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(LucideIcons.search, size: 20),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      'FIND AVAILABLE BUSES',
+                                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 0.5),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (_fromStopId != null || _toStopId != null)
+                              Text(
+                                '${_fromStopId != null ? _selectedStopName(_fromStopId!) : 'Pickup?'}  ->  ${_toStopId != null ? _selectedStopName(_toStopId!) : 'Destination?'}',
+                                style: const TextStyle(
+                                  color: Color(0xFF64748B),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          const Icon(LucideIcons.wifiOff, color: Color(0xFF94A3B8), size: 34),
+          const SizedBox(height: 10),
+          Text(
+            _loadError ?? 'Unable to load stops.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF475569), fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _fetchStops,
+              child: const Text('Retry'),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -196,7 +258,7 @@ class _SearchScreenState extends State<SearchScreen> {
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -254,7 +316,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _shiftToggleItem(String value, IconData icon, String label) {
-    bool active = _shift == value;
+    final active = _shift == value;
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _shift = value),
@@ -263,14 +325,16 @@ class _SearchScreenState extends State<SearchScreen> {
           decoration: BoxDecoration(
             color: active ? Colors.white : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
-            boxShadow: active ? [
-              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))
-            ] : null,
+            boxShadow: active
+                ? [
+                    BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2))
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: active ? const Color(0xFF2563EB) : const Color(0xFF64748B)),
+              Icon(icon, size: 16, color: active ? const Color(0xFFF59E0B) : const Color(0xFF64748B)),
               const SizedBox(width: 8),
               Text(
                 label,
@@ -285,5 +349,11 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       ),
     );
+  }
+
+  String _selectedStopName(String id) {
+    final match = _stops.where((s) => s['id'] == id);
+    if (match.isEmpty) return 'Unknown stop';
+    return match.first['stop_name']?.toString() ?? 'Unknown stop';
   }
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'screens/search_screen.dart';
 
 void main() async {
@@ -26,9 +25,24 @@ class StudentApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.light,
         useMaterial3: true,
-        fontFamily: 'Inter',
-        colorSchemeSeed: const Color(0xFF2563EB),
+        colorSchemeSeed: const Color(0xFFF59E0B),
         scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF1E293B),
+          contentTextStyle: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          surfaceTintColor: Colors.transparent,
+          foregroundColor: Color(0xFF1E293B),
+          titleTextStyle: TextStyle(
+            color: Color(0xFF1E293B),
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+          ),
+        ),
         
         // Custom text theme for better readability
         textTheme: const TextTheme(
@@ -63,7 +77,17 @@ class StudentApp extends StatelessWidget {
           ),
           focusedBorder: OutlineInputBorder(
              borderRadius: BorderRadius.circular(12),
-             borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
+             borderSide: const BorderSide(color: Color(0xFFF59E0B), width: 1.5),
+          ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFF59E0B),
+            foregroundColor: const Color(0xFF1E293B),
+            minimumSize: const Size.fromHeight(52),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            elevation: 0,
+            textStyle: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
       ),

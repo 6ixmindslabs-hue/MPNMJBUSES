@@ -191,6 +191,7 @@ class WsTrackingService {
     required String tripId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     await prefs.setString(
       _trackingSessionKey,
       jsonEncode({'wsToken': wsToken, 'tripId': tripId}),
@@ -199,11 +200,13 @@ class WsTrackingService {
 
   Future<void> clearPersistedTrackingSession() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     await prefs.remove(_trackingSessionKey);
   }
 
   Future<bool> connectFromPersistedSession() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final raw = prefs.getString(_trackingSessionKey);
     if (raw == null || raw.isEmpty) return false;
 

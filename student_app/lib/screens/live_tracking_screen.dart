@@ -24,16 +24,20 @@ class LiveTrackingScreen extends StatefulWidget {
 
 class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
   final MapController _mapController = MapController();
-  LatLng _busLocation = const LatLng(12.9716, 77.5946); // Default
+  LatLng _busLocation = const LatLng(12.9716, 77.5946);
   List<Map<String, dynamic>> _routeStops = [];
   bool _loadingStops = true;
+  bool _loadingLocation = true;
+  String? _locationError;
   Timer? _pollingTimer;
   Map<String, dynamic>? _lastTelemetry;
+  DateTime? _lastUpdatedAt;
 
   @override
   void initState() {
     super.initState();
     _fetchRouteStops();
+    _fetchLastLocation();
     _startLiveTracking();
   }
 
@@ -48,42 +52,66 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
       final routeId = widget.trip['schedules']['routes']['id'];
       final shift = widget.trip['schedule_type'];
       final response = await http.get(Uri.parse('${AppConfig.effectiveApiBase}/stops?route_id=$routeId&schedule_type=$shift'));
-      
+
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
+        if (!mounted) return;
         setState(() {
           _routeStops = data.cast<Map<String, dynamic>>();
           _loadingStops = false;
         });
+      } else {
+        if (!mounted) return;
+        setState(() => _loadingStops = false);
       }
     } catch (e) {
       debugPrint('Error fetching stops: $e');
+      if (!mounted) return;
+      setState(() => _loadingStops = false);
     }
   }
 
   void _startLiveTracking() {
-    _pollingTimer = Timer.periodic(const Duration(milliseconds: AppConfig.refreshIntervalMs), (_) async {
-      _fetchLastLocation();
-    });
+    _pollingTimer = Timer.periodic(
+      const Duration(milliseconds: AppConfig.refreshIntervalMs),
+      (_) => _fetchLastLocation(),
+    );
   }
 
   Future<void> _fetchLastLocation() async {
     try {
       final response = await http.get(Uri.parse('${AppConfig.effectiveApiBase}/trips/${widget.trip['id']}/last-location'));
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final newLoc = LatLng(data['latitude'], data['longitude']);
-        
+        final data = Map<String, dynamic>.from(jsonDecode(response.body));
+        final newLoc = LatLng(
+          (data['latitude'] as num).toDouble(),
+          (data['longitude'] as num).toDouble(),
+        );
+
+        if (!mounted) return;
         setState(() {
           _busLocation = newLoc;
           _lastTelemetry = data;
+          _lastUpdatedAt = DateTime.now();
+          _locationError = null;
+          _loadingLocation = false;
         });
 
-        // Smoothly pan map to follow bus
         _mapController.move(newLoc, _mapController.camera.zoom);
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _loadingLocation = false;
+          _locationError = 'Waiting for live location data...';
+        });
       }
     } catch (e) {
       debugPrint('Error fetching location: $e');
+      if (!mounted) return;
+      setState(() {
+        _loadingLocation = false;
+        _locationError = 'Connection lost. Retrying automatically...';
+      });
     }
   }
 
@@ -95,20 +123,27 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
         title: Column(
           children: [
             const Text('WHERE IS MY BUS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF94A3B8), letterSpacing: 2)),
-            Text(widget.trip['schedules']['buses']['bus_name'], style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+            Text(
+              widget.trip['schedules']['buses']['bus_name']?.toString() ?? 'Bus',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+            ),
           ],
         ),
-        backgroundColor: Colors.white,
         centerTitle: true,
-        elevation: 0,
         leading: IconButton(
           icon: const Icon(LucideIcons.chevronLeft),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(LucideIcons.crosshair),
+            tooltip: 'Center bus',
+            onPressed: () => _mapController.move(_busLocation, _mapController.camera.zoom),
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // 🗺️ Map Section (Top 40%)
           Expanded(
             flex: 2,
             child: Stack(
@@ -126,7 +161,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
                     ),
                     MarkerLayer(
                       markers: [
-                        // Bus Marker
                         Marker(
                           point: _busLocation,
                           width: 80,
@@ -138,27 +172,26 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
                                 width: 24,
                                 height: 24,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF2563EB).withOpacity(0.2),
+                                  color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
                                   shape: BoxShape.circle,
                                 ),
                               ),
-                              const Icon(LucideIcons.bus, color: Color(0xFF2563EB), size: 32),
+                              const Icon(LucideIcons.bus, color: Color(0xFFF59E0B), size: 32),
                             ],
                           ),
                         ),
-                        // Stops Markers
-                        ..._routeStops.map((s) => Marker(
-                          point: LatLng(s['latitude'], s['longitude']),
-                          width: 40,
-                          height: 40,
-                          child: const Icon(LucideIcons.circleDot, color: Color(0xFF94A3B8), size: 12),
-                        )),
+                        ..._routeStops.map(
+                          (s) => Marker(
+                            point: LatLng((s['latitude'] as num).toDouble(), (s['longitude'] as num).toDouble()),
+                            width: 40,
+                            height: 40,
+                            child: const Icon(LucideIcons.circleDot, color: Color(0xFF94A3B8), size: 12),
+                          ),
+                        ),
                       ],
                     ),
                   ],
                 ),
-                
-                // Floating Stats Overlay
                 Positioned(
                   bottom: 24,
                   left: 24,
@@ -168,8 +201,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
               ],
             ),
           ),
-
-          // 🕒 Timeline Section (Bottom 60%)
           Expanded(
             flex: 3,
             child: Container(
@@ -181,9 +212,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
                   topRight: Radius.circular(32),
                 ),
               ),
-              child: _loadingStops
-                  ? const Center(child: CircularProgressIndicator())
-                  : _buildTimeline(),
+              child: _loadingStops ? const Center(child: CircularProgressIndicator()) : _buildTimeline(),
             ),
           ),
         ],
@@ -192,33 +221,59 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
   }
 
   Widget _buildLiveOverlay() {
+    final speed = (_lastTelemetry?['speed'] as num?)?.toDouble() ?? 0;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10))
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 20, offset: const Offset(0, 10))],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle),
+              Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: _locationError == null ? Colors.green : Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    _locationError == null ? 'LIVE UPDATES' : 'RECONNECTING',
+                    style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B), fontSize: 12),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              const Text('LIVE UPDATES', style: TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B), fontSize: 12)),
+              Text(
+                '${speed.toStringAsFixed(0)} KM/H',
+                style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFFF59E0B), fontSize: 14),
+              ),
             ],
           ),
-          Text(
-            '${_lastTelemetry?['speed']?.toStringAsFixed(0) ?? 0} KM/H',
-            style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF2563EB), fontSize: 14),
-          ),
+          const SizedBox(height: 6),
+          if (_loadingLocation)
+            const Text(
+              'Loading live location...',
+              style: TextStyle(color: Color(0xFF64748B), fontSize: 12, fontWeight: FontWeight.w600),
+            )
+          else if (_locationError != null)
+            Text(
+              _locationError!,
+              style: const TextStyle(color: Color(0xFFDC2626), fontSize: 12, fontWeight: FontWeight.w600),
+            )
+          else if (_lastUpdatedAt != null)
+            Text(
+              'Updated ${DateFormat('hh:mm:ss a').format(_lastUpdatedAt!)}',
+              style: const TextStyle(color: Color(0xFF64748B), fontSize: 12, fontWeight: FontWeight.w600),
+            ),
         ],
       ),
     );
@@ -247,30 +302,28 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
   }
 
   Widget _buildTimelineItem(Map<String, dynamic> stop, bool isFirst, bool isLast) {
-    // Basic logic to check if stop is passed
-    // In real app, we compare bus distance to each stop coordinate
-    final stopLocation = LatLng(stop['latitude'], stop['longitude']);
+    final stopLocation = LatLng((stop['latitude'] as num).toDouble(), (stop['longitude'] as num).toDouble());
     final distanceToStop = const Distance().as(LengthUnit.Meter, _busLocation, stopLocation);
-    final isArrivingNear = distanceToStop < 200; // within 200m
-    
+    final isArrivingNear = distanceToStop < 200;
+
+    final rawArrival = stop['arrival_time']?.toString() ?? '--:--';
+    final shortArrival = rawArrival.length >= 5 ? rawArrival.substring(0, 5) : rawArrival;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Time Section
         SizedBox(
           width: 60,
           child: Column(
             children: [
               Text(
-                stop['arrival_time'].substring(0, 5),
+                shortArrival,
                 style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B), fontSize: 14),
               ),
               const Text('SCH', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
         ),
-
-        // Timeline Line & Connector
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Column(
@@ -284,13 +337,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
                 width: 16,
                 height: 16,
                 decoration: BoxDecoration(
-                  color: isArrivingNear ? const Color(0xFF2563EB) : Colors.white,
+                  color: isArrivingNear ? const Color(0xFFF59E0B) : Colors.white,
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF2563EB), width: 3),
+                  border: Border.all(color: const Color(0xFFF59E0B), width: 3),
                 ),
-                child: isArrivingNear 
-                    ? const Icon(LucideIcons.zap, color: Colors.white, size: 8) 
-                    : null,
+                child: isArrivingNear ? const Icon(LucideIcons.zap, color: Colors.white, size: 8) : null,
               ),
               Container(
                 width: 2,
@@ -300,29 +351,33 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
             ],
           ),
         ),
-
-        // Stop Details Section
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 2),
               Text(
-                stop['stop_name'],
+                stop['stop_name']?.toString() ?? 'Stop',
                 style: TextStyle(
-                  fontWeight: FontWeight.w900, 
-                  fontSize: 16, 
-                  color: isArrivingNear ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                  color: isArrivingNear ? const Color(0xFFF59E0B) : const Color(0xFF1E293B),
                 ),
               ),
               const SizedBox(height: 4),
               Row(
                 children: [
-                  Icon(LucideIcons.mapPin, size: 12, color: isArrivingNear ? const Color(0xFF2563EB) : const Color(0xFF94A3B8)),
+                  Icon(LucideIcons.mapPin, size: 12, color: isArrivingNear ? const Color(0xFFF59E0B) : const Color(0xFF94A3B8)),
                   const SizedBox(width: 4),
                   Text(
-                    isArrivingNear ? 'Arriving Now' : '${distanceToStop > 1000 ? (distanceToStop/1000).toStringAsFixed(1) + ' km' : distanceToStop.toString() + ' m'} away',
-                    style: TextStyle(color: isArrivingNear ? const Color(0xFF2563EB) : const Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.bold),
+                    isArrivingNear
+                        ? 'Arriving now'
+                        : '${distanceToStop > 1000 ? '${(distanceToStop / 1000).toStringAsFixed(1)} km' : '${distanceToStop.toStringAsFixed(0)} m'} away',
+                    style: TextStyle(
+                      color: isArrivingNear ? const Color(0xFFF59E0B) : const Color(0xFF94A3B8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
@@ -331,10 +386,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2563EB).withOpacity(0.1),
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text('ON TIME', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w900, fontSize: 10)),
+                  child: const Text(
+                    'NEAR YOUR STOP',
+                    style: TextStyle(color: Color(0xFFF59E0B), fontWeight: FontWeight.w900, fontSize: 10),
+                  ),
                 ),
             ],
           ),
