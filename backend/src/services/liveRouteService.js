@@ -5,6 +5,8 @@ const {
   STOP_ARRIVAL_RADIUS_METERS,
 } = require('../config/tripRules');
 const {
+  ACTIVE_SEGMENT_ROUTE_COOLDOWN_MS,
+  ACTIVE_SEGMENT_ROUTE_MIN_MOVE_METERS,
   OFF_ROUTE_THRESHOLD_METERS,
   OFF_ROUTE_REROUTE_COOLDOWN_MS,
   OFF_ROUTE_REROUTE_MIN_MOVE_METERS,
@@ -19,6 +21,7 @@ const {
 const { isTelemetryOnline } = require('./tripLiveService');
 
 const recoveryPathCache = new Map();
+const activeSegmentRouteCache = new Map();
 const EARTH_RADIUS_M = 6371000;
 
 function pointDistanceMeters(a, b) {
@@ -353,6 +356,54 @@ async function getRecoveryGeometry({ tripId, rawPoint, nextStop }) {
   }
 }
 
+async function getActiveSegmentGeometry({
+  tripId,
+  originPoint,
+  nextStop,
+  fallbackPoints,
+}) {
+  if (!originPoint || !nextStop) return fallbackPoints || [];
+
+  const cacheKey = `${tripId}:${nextStop.id}`;
+  const cached = activeSegmentRouteCache.get(cacheKey);
+  const now = Date.now();
+
+  if (cached) {
+    const ageMs = now - cached.createdAt;
+    const movedMeters = pointDistanceMeters(originPoint, cached.origin);
+
+    if (
+      ageMs <= ACTIVE_SEGMENT_ROUTE_COOLDOWN_MS &&
+      movedMeters <= ACTIVE_SEGMENT_ROUTE_MIN_MOVE_METERS
+    ) {
+      return cached.points;
+    }
+  }
+
+  try {
+    const route = await requestRoadGeometry([
+      originPoint,
+      {
+        latitude: nextStop.latitude,
+        longitude: nextStop.longitude,
+      },
+    ]);
+
+    const points = route.coordinates?.length ? route.coordinates : fallbackPoints || [];
+
+    activeSegmentRouteCache.set(cacheKey, {
+      createdAt: now,
+      origin: originPoint,
+      points,
+    });
+
+    return points;
+  } catch (error) {
+    console.error('[Active Segment] Failed to build next-stop geometry:', error.message);
+    return fallbackPoints || [];
+  }
+}
+
 async function buildLiveRouteSnapshot({
   tripId,
   routeRecord,
@@ -442,7 +493,7 @@ async function buildLiveRouteSnapshot({
   const nextStopRouteDistance = nextStop ? Number(nextStop.routeDistanceMeters || 0) : snapped.routeDistanceMeters;
 
   const passedGeometry = sliceGeometryByDistance(routePoints, 0, snapped.routeDistanceMeters);
-  const nextStopGeometry = nextStop
+  const slicedNextStopGeometry = nextStop
     ? sliceGeometryByDistance(routePoints, snapped.routeDistanceMeters, nextStopRouteDistance)
     : [];
   const remainingGeometry = sliceGeometryByDistance(
@@ -458,6 +509,15 @@ async function buildLiveRouteSnapshot({
   const delayMinutes = calculateDelayMinutes(nextStop, etaMinutes);
   const delayStatus = calculateDelayStatus(delayMinutes);
   const isOffRoute = snapped.distanceMeters > OFF_ROUTE_THRESHOLD_METERS;
+  const activeSegmentOrigin = isOffRoute ? rawPoint : snapped.snappedPoint;
+  const nextStopGeometry = nextStop
+    ? await getActiveSegmentGeometry({
+        tripId,
+        originPoint: activeSegmentOrigin,
+        nextStop,
+        fallbackPoints: slicedNextStopGeometry,
+      })
+    : [];
   const recoveryGeometry = isOffRoute && includeRecoveryGeometry
     ? await getRecoveryGeometry({ tripId, rawPoint, nextStop })
     : [];

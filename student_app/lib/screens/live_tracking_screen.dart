@@ -47,8 +47,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   bool _hasLoadedFullGeometry = false;
 
   LatLng _displayBusLocation = const LatLng(12.9716, 77.5946);
-  LatLng? _rawBusLocation;
-  LatLng? _snappedBusLocation;
   LatLng? _targetBusLocation;
   LatLng? _activeNextStopLocation;
   LatLng? _animationStartLocation;
@@ -57,9 +55,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   List<Map<String, dynamic>> _routeStops = [];
   List<LatLng> _fullRouteGeometry = [];
   List<LatLng> _activeRouteTailGeometry = [];
-  List<LatLng> _offRouteConnectorTailGeometry = [];
   List<LatLng> _activeRouteGeometry = [];
-  List<LatLng> _offRouteConnectorGeometry = [];
 
   String? _locationError;
   Map<String, dynamic>? _liveSnapshot;
@@ -161,10 +157,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         busLocation: animatedLocation,
         routeSegment: _activeRouteTailGeometry,
         nextStopLocation: _activeNextStopLocation,
-      );
-      _offRouteConnectorGeometry = _buildOffRouteConnector(
-        busLocation: animatedLocation,
-        connectorGeometry: _offRouteConnectorTailGeometry,
       );
     });
 
@@ -413,10 +405,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       routeSegment: _activeRouteTailGeometry,
       nextStopLocation: _activeNextStopLocation,
     );
-    _offRouteConnectorGeometry = _buildOffRouteConnector(
-      busLocation: location,
-      connectorGeometry: _offRouteConnectorTailGeometry,
-    );
   }
 
   void _animateMarkerTo({
@@ -546,6 +534,23 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     return '${distanceMeters.toStringAsFixed(0)} m';
   }
 
+  int _nearestPointIndex(LatLng origin, List<LatLng> points) {
+    if (points.isEmpty) return 0;
+
+    var nearestIndex = 0;
+    var nearestDistance = double.infinity;
+
+    for (var index = 0; index < points.length; index += 1) {
+      final distanceMeters = _distanceMeters(origin, points[index]);
+      if (distanceMeters < nearestDistance) {
+        nearestDistance = distanceMeters;
+        nearestIndex = index;
+      }
+    }
+
+    return nearestIndex;
+  }
+
   LatLng? _resolveNextStopLocation(
     List<Map<String, dynamic>> stops,
     int nextStopIndex,
@@ -582,13 +587,142 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     return [head, ...tail];
   }
 
+  void _appendUniquePoint(List<LatLng> points, LatLng point) {
+    if (points.isEmpty || _distanceMeters(points.last, point) > 1) {
+      points.add(point);
+    }
+  }
+
+  LatLng _interpolateRoutePoint(LatLng start, LatLng end, double fraction) {
+    final clamped = fraction.clamp(0.0, 1.0).toDouble();
+    return LatLng(
+      start.latitude + (end.latitude - start.latitude) * clamped,
+      start.longitude + (end.longitude - start.longitude) * clamped,
+    );
+  }
+
+  List<LatLng> _sliceGeometryByDistance(
+    List<LatLng> routePoints,
+    double startDistanceMeters, [
+    double endDistanceMeters = double.infinity,
+  ]) {
+    if (routePoints.length < 2) return List<LatLng>.from(routePoints);
+
+    final cumulative = <double>[0];
+    for (var index = 1; index < routePoints.length; index += 1) {
+      cumulative.add(
+        cumulative.last + _distanceMeters(routePoints[index - 1], routePoints[index]),
+      );
+    }
+
+    final totalDistance = cumulative.last;
+    final startDistance = startDistanceMeters.clamp(0.0, totalDistance).toDouble();
+    final endDistance = endDistanceMeters.isFinite
+        ? endDistanceMeters.clamp(startDistance, totalDistance).toDouble()
+        : totalDistance;
+
+    if (endDistance <= startDistance) {
+      return const [];
+    }
+
+    final sliced = <LatLng>[];
+
+    for (var index = 0; index < routePoints.length - 1; index += 1) {
+      final segmentStartDistance = cumulative[index];
+      final segmentEndDistance = cumulative[index + 1];
+      final segmentLength = segmentEndDistance - segmentStartDistance;
+      if (segmentLength <= 0) continue;
+      if (segmentEndDistance < startDistance) continue;
+      if (segmentStartDistance > endDistance) break;
+
+      final start = routePoints[index];
+      final end = routePoints[index + 1];
+
+      if (sliced.isEmpty) {
+        if (startDistance <= segmentStartDistance) {
+          _appendUniquePoint(sliced, start);
+        } else {
+          final fraction = (startDistance - segmentStartDistance) / segmentLength;
+          _appendUniquePoint(sliced, _interpolateRoutePoint(start, end, fraction));
+        }
+      }
+
+      if (endDistance <= segmentEndDistance) {
+        final fraction = (endDistance - segmentStartDistance) / segmentLength;
+        _appendUniquePoint(sliced, _interpolateRoutePoint(start, end, fraction));
+        break;
+      }
+
+      _appendUniquePoint(sliced, end);
+    }
+
+    return sliced;
+  }
+
+  double? _resolveNextStopRouteDistanceMeters() {
+    if (_routeStops.isEmpty || _nextStopIndex < 0 || _nextStopIndex >= _routeStops.length) {
+      return null;
+    }
+
+    final nextStop = _routeStops[_nextStopIndex];
+    final routeDistance = nextStop['route_distance_m'];
+    if (routeDistance == null) return null;
+
+    return _parseDouble(routeDistance);
+  }
+
+  List<Polyline> _buildContextRoutePolylines() {
+    if (_fullRouteGeometry.length < 2) return const [];
+
+    final nextStopRouteDistance = _resolveNextStopRouteDistanceMeters();
+    if (nextStopRouteDistance == null) {
+      return [
+        Polyline(
+          points: _fullRouteGeometry,
+          color: const Color(0xFFCBD5E1).withValues(alpha: 0.4),
+          strokeWidth: 2.5,
+        ),
+      ];
+    }
+
+    final activeSegmentStartDistance = math.min(
+      _currentRouteDistanceMeters.toDouble(),
+      nextStopRouteDistance,
+    );
+    final activeSegmentEndDistance = math.max(
+      _currentRouteDistanceMeters.toDouble(),
+      nextStopRouteDistance,
+    );
+
+    final contextSegments = <List<LatLng>>[
+      _sliceGeometryByDistance(_fullRouteGeometry, 0, activeSegmentStartDistance),
+      _sliceGeometryByDistance(_fullRouteGeometry, activeSegmentEndDistance),
+    ].where((segment) => segment.length >= 2).toList();
+
+    if (contextSegments.isEmpty) {
+      contextSegments.add(_fullRouteGeometry);
+    }
+
+    return contextSegments
+        .map(
+          (segment) => Polyline(
+            points: segment,
+            color: const Color(0xFFCBD5E1).withValues(alpha: 0.4),
+            strokeWidth: 2.5,
+          ),
+        )
+        .toList();
+  }
+
   List<LatLng> _buildActiveRouteSegment({
     required LatLng busLocation,
     required List<LatLng> routeSegment,
     required LatLng? nextStopLocation,
   }) {
     if (routeSegment.length >= 2) {
-      return _prependUniquePoint(busLocation, routeSegment);
+      final nearestIndex = _nearestPointIndex(busLocation, routeSegment);
+      final trimmedSegment = routeSegment.sublist(nearestIndex);
+      return _prependUniquePoint(busLocation, trimmedSegment);
     }
 
     if (routeSegment.length == 1 && nextStopLocation != null) {
@@ -606,27 +740,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     return const [];
   }
 
-  List<LatLng> _buildOffRouteConnector({
-    required LatLng busLocation,
-    required List<LatLng> connectorGeometry,
-  }) {
-    if (connectorGeometry.length >= 2) {
-      return _prependUniquePoint(busLocation, connectorGeometry);
-    }
-
-    if (connectorGeometry.length == 1) {
-      return [busLocation, connectorGeometry.first];
-    }
-
-    return const [];
-  }
-
   Future<void> _fetchLiveRoute({bool includeFullGeometry = false}) async {
     final tripId = widget.trip['id'];
     final shouldIncludeFullGeometry = includeFullGeometry || !_hasLoadedFullGeometry;
-    final uri = Uri.parse(
-      '${AppConfig.effectiveApiBase}/trips/$tripId/live-route'
-      '${shouldIncludeFullGeometry ? '?include_full_geometry=true' : ''}',
+    final uri = Uri.parse('${AppConfig.effectiveApiBase}/trips/$tripId/live-route').replace(
+      queryParameters: {
+        if (shouldIncludeFullGeometry) 'include_full_geometry': 'true',
+        'include_recovery_geometry': 'false',
+      },
     );
 
     try {
@@ -651,7 +772,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final nextStopIndex = _resolveNextStopIndex(routeStops, payload);
       final nextStopLocation = _resolveNextStopLocation(routeStops, nextStopIndex, payload);
       final nextStopGeometry = _parseGeometry(payload['next_stop_geometry']);
-      final recoveryGeometry = _parseGeometry(payload['recovery_geometry']);
       final distanceFromRouteMeters = _parseDouble(payload['distance_from_route_m']);
       final speedKmh = _parseDouble(payload['speed']);
       final serverHeadingDeg = _normalizeAngle(_parseDouble(payload['heading']));
@@ -681,26 +801,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         speedKmh,
         telemetryTimestamp,
       );
-      final showOffRouteConnector =
-          isOffRoute && distanceFromRouteMeters >= _offRouteVisualThresholdMeters;
       final shouldApplyImmediately = _targetBusLocation == null || isOutlier;
 
       if (!mounted) return;
       setState(() {
-        _rawBusLocation = rawLocation;
-        _snappedBusLocation = snappedLocation;
         _routeStops = routeStops;
         _activeNextStopLocation = nextStopLocation;
         _activeRouteTailGeometry = nextStopGeometry;
-        _offRouteConnectorTailGeometry = showOffRouteConnector ? recoveryGeometry : const [];
         _activeRouteGeometry = _buildActiveRouteSegment(
           busLocation: _displayBusLocation,
           routeSegment: _activeRouteTailGeometry,
           nextStopLocation: _activeNextStopLocation,
-        );
-        _offRouteConnectorGeometry = _buildOffRouteConnector(
-          busLocation: _displayBusLocation,
-          connectorGeometry: _offRouteConnectorTailGeometry,
         );
         if (fullRouteGeometry.isNotEmpty) {
           _fullRouteGeometry = fullRouteGeometry;
@@ -785,178 +896,226 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            flex: 5,
-            child: Stack(
-              children: [
-                FlutterMap(
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: _displayBusLocation,
-                    initialZoom: 15.0,
-                    minZoom: 5,
-                    maxZoom: 18.5,
-                    interactionOptions: const InteractionOptions(
-                      flags: InteractiveFlag.all,
-                      enableScrollWheel: true,
-                    ),
-                    onMapReady: () {
-                      _mapReady = true;
-                      if (_followBus) {
-                        _centerOnBus();
-                      }
-                    },
-                    onMapEvent: _handleMapEvent,
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'in.edu.mpnmjec.student',
-                    ),
-                    if (_fullRouteGeometry.length >= 2)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _fullRouteGeometry,
-                            color: const Color(0xFFCBD5E1).withValues(alpha: 0.65),
-                            strokeWidth: 3.5,
-                            borderColor: Colors.white.withValues(alpha: 0.5),
-                            borderStrokeWidth: 1.25,
-                          ),
-                        ],
-                      ),
-                    if (_activeRouteGeometry.length >= 2)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _activeRouteGeometry,
-                            strokeWidth: 7,
-                            borderColor: Colors.white.withValues(alpha: 0.92),
-                            borderStrokeWidth: 2.5,
-                            gradientColors: const [
-                              Color(0xFFFDE047),
-                              Color(0xFFF59E0B),
-                              Color(0xFFEA580C),
-                            ],
-                          ),
-                        ],
-                      ),
-                    if (_offRouteConnectorGeometry.length >= 2)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _offRouteConnectorGeometry,
-                            color: const Color(0xFFDC2626),
-                            strokeWidth: 4,
-                            isDotted: true,
-                          ),
-                        ],
-                      ),
-                    MarkerLayer(
-                      markers: [
-                        if (_liveSnapshot?['is_off_route'] == true &&
-                            _distanceToRouteMeters >= _offRouteVisualThresholdMeters &&
-                            _snappedBusLocation != null &&
-                            _rawBusLocation != null)
-                          Marker(
-                            point: _snappedBusLocation!,
-                            width: 28,
-                            height: 28,
-                            child: Center(
-                              child: Container(
-                                width: 14,
-                                height: 14,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: const Color(0xFFDC2626),
-                                    width: 3,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        Marker(
-                          point: _displayBusLocation,
-                          width: 104,
-                          height: 104,
-                          child: _buildBusMarker(),
-                        ),
-                        ..._routeStops.asMap().entries.map(
-                          (entry) => Marker(
-                            point: LatLng(
-                              _parseDouble(entry.value['latitude']),
-                              _parseDouble(entry.value['longitude']),
-                            ),
-                            width: 120,
-                            height: 72,
-                            child: _buildStopMarker(entry.value, entry.key),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                Positioned(
-                  top: 20,
-                  right: 16,
-                  child: Column(
-                    children: [
-                      _mapControlButton(
-                        icon: LucideIcons.plus,
-                        tooltip: 'Zoom in',
-                        onTap: () => _zoomBy(1),
-                      ),
-                      const SizedBox(height: 10),
-                      _mapControlButton(
-                        icon: LucideIcons.minus,
-                        tooltip: 'Zoom out',
-                        onTap: () => _zoomBy(-1),
-                      ),
-                      const SizedBox(height: 10),
-                      _mapControlButton(
-                        icon: _followBus ? LucideIcons.locateFixed : LucideIcons.locate,
-                        tooltip: _followBus ? 'Following bus' : 'Follow bus',
-                        active: _followBus,
-                        onTap: () {
-                          setState(() => _followBus = true);
-                          _centerOnBus();
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 6,
-            child: Container(
-              padding: const EdgeInsets.only(top: 24, left: 24, right: 24),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(32),
-                  topRight: Radius.circular(32),
-                ),
-              ),
+          Positioned.fill(child: _buildLiveMap()),
+          Positioned(
+            top: 20,
+            right: 16,
+            child: SafeArea(
+              bottom: false,
               child: Column(
                 children: [
-                  _buildLiveOverlay(),
-                  const SizedBox(height: 20),
-                  Expanded(
-                    child: _loadingStops
-                        ? const Center(child: CircularProgressIndicator())
-                        : _buildTimeline(),
+                  _mapControlButton(
+                    icon: LucideIcons.plus,
+                    tooltip: 'Zoom in',
+                    onTap: () => _zoomBy(1),
+                  ),
+                  const SizedBox(height: 10),
+                  _mapControlButton(
+                    icon: LucideIcons.minus,
+                    tooltip: 'Zoom out',
+                    onTap: () => _zoomBy(-1),
+                  ),
+                  const SizedBox(height: 10),
+                  _mapControlButton(
+                    icon: _followBus ? LucideIcons.locateFixed : LucideIcons.locate,
+                    tooltip: _followBus ? 'Following bus' : 'Follow bus',
+                    active: _followBus,
+                    onTap: () {
+                      setState(() => _followBus = true);
+                      _centerOnBus();
+                    },
                   ),
                 ],
               ),
             ),
           ),
+          SafeArea(
+            top: false,
+            child: DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.42,
+              minChildSize: 0.24,
+              maxChildSize: 0.86,
+              snap: true,
+              snapSizes: const [0.24, 0.42, 0.68, 0.86],
+              builder: (context, scrollController) => _buildDetailsSheet(scrollController),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLiveMap() {
+    final contextRoutePolylines = _buildContextRoutePolylines();
+
+    return FlutterMap(
+      mapController: _mapController,
+      options: MapOptions(
+        initialCenter: _displayBusLocation,
+        initialZoom: 15.0,
+        minZoom: 5,
+        maxZoom: 18.5,
+        interactionOptions: const InteractionOptions(
+          flags: InteractiveFlag.all,
+          enableScrollWheel: true,
+        ),
+        onMapReady: () {
+          _mapReady = true;
+          if (_followBus) {
+            _centerOnBus();
+          }
+        },
+        onMapEvent: _handleMapEvent,
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          userAgentPackageName: 'in.edu.mpnmjec.student',
+        ),
+        if (contextRoutePolylines.isNotEmpty)
+          PolylineLayer(
+            polylines: contextRoutePolylines,
+          ),
+        if (_activeRouteGeometry.length >= 2)
+          PolylineLayer(
+            polylines: [
+              Polyline(
+                points: _activeRouteGeometry,
+                color: const Color(0xFFF59E0B),
+                strokeWidth: 6.5,
+                borderColor: Colors.white.withValues(alpha: 0.88),
+                borderStrokeWidth: 2.0,
+              ),
+            ],
+          ),
+        MarkerLayer(
+          markers: [
+            Marker(
+              point: _displayBusLocation,
+              width: 104,
+              height: 104,
+              child: _buildBusMarker(),
+            ),
+            ..._routeStops.asMap().entries.map(
+              (entry) => Marker(
+                point: LatLng(
+                  _parseDouble(entry.value['latitude']),
+                  _parseDouble(entry.value['longitude']),
+                ),
+                width: 120,
+                height: 72,
+                child: _buildStopMarker(entry.value, entry.key),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailsSheet(ScrollController scrollController) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(32),
+          topRight: Radius.circular(32),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x1A0F172A),
+            blurRadius: 24,
+            offset: Offset(0, -8),
+          ),
+        ],
+      ),
+      child: Scrollbar(
+        controller: scrollController,
+        interactive: true,
+        radius: const Radius.circular(999),
+        thickness: 4,
+        child: CustomScrollView(
+          controller: scrollController,
+          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+          slivers: [
+            const SliverToBoxAdapter(child: SizedBox(height: 12)),
+            SliverToBoxAdapter(child: Center(child: _buildSheetHandle())),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                child: _buildLiveOverlay(),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  'STATION TIMELINE',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 11,
+                    color: Color(0xFF94A3B8),
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 18)),
+            if (_loadingStops)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_routeStops.isEmpty)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Text(
+                    'No route stops configured yet.',
+                    style: TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(24, 0, 24, math.max(bottomInset + 24, 32)),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final stop = _routeStops[index];
+                      return _buildTimelineItem(
+                        stop,
+                        index,
+                        index == 0,
+                        index == _routeStops.length - 1,
+                      );
+                    },
+                    childCount: _routeStops.length,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSheetHandle() {
+    return Container(
+      width: 48,
+      height: 6,
+      decoration: BoxDecoration(
+        color: const Color(0xFFCBD5E1),
+        borderRadius: BorderRadius.circular(999),
       ),
     );
   }
@@ -1044,7 +1203,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             Text(
               _liveSnapshot?['is_off_route'] == true &&
                       _distanceToRouteMeters >= _offRouteVisualThresholdMeters
-                  ? 'Off route. Recovery path to ${nextStop['stop_name']}  |  ${_formatDistance(_distanceToRouteMeters)} away from route'
+                  ? 'Off route near ${nextStop['stop_name']}  |  ${_formatDistance(_distanceToRouteMeters)} away from route'
                   : 'Next stop: ${nextStop['stop_name']}  |  ${_formatDistance(_distanceToNextStopMeters)}  |  $etaText',
               style: TextStyle(
                 color: _liveSnapshot?['is_off_route'] == true &&
@@ -1331,45 +1490,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildTimeline() {
-    if (_routeStops.isEmpty) {
-      return const Center(
-        child: Text(
-          'No route stops configured yet.',
-          style: TextStyle(
-            color: Color(0xFF94A3B8),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'STATION TIMELINE',
-          style: TextStyle(
-            fontWeight: FontWeight.w900,
-            fontSize: 11,
-            color: Color(0xFF94A3B8),
-            letterSpacing: 1.5,
-          ),
-        ),
-        const SizedBox(height: 24),
-        Expanded(
-          child: ListView.builder(
-            itemCount: _routeStops.length,
-            itemBuilder: (context, index) {
-              final stop = _routeStops[index];
-              return _buildTimelineItem(stop, index, index == 0, index == _routeStops.length - 1);
-            },
-          ),
-        ),
-      ],
     );
   }
 

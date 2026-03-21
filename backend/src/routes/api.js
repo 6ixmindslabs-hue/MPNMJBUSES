@@ -624,6 +624,7 @@ router.get('/trips/:id/live-route', async (req, res) => {
   try {
     const payload = await buildTripLiveRouteResponse(req.params.id, {
       includeFullGeometry: req.query.include_full_geometry === 'true',
+      includeRecoveryGeometry: req.query.include_recovery_geometry !== 'false',
     });
 
     if (!payload) {
