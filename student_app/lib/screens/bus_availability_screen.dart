@@ -49,13 +49,24 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       }
 
       final List<dynamic> data = jsonDecode(response.body);
-      final routeId = widget.fromStop['route_id'];
+      final selectedRouteId = (widget.fromStop['route_id'] ?? '').toString().trim();
+      final selectedShift = widget.shift.toLowerCase().trim();
 
-      final List<Map<String, dynamic>> filtered = data.cast<Map<String, dynamic>>().where((t) {
-        final schedule = Map<String, dynamic>.from(t['schedules'] ?? const {});
-        final route = Map<String, dynamic>.from(schedule['routes'] ?? const {});
-        return t['schedule_type'] == widget.shift && route['id'] == routeId;
-      }).toList();
+      final List<Map<String, dynamic>> filtered = data
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .where((trip) {
+            final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
+            final route = Map<String, dynamic>.from(schedule['routes'] ?? const {});
+
+            final tripRouteId = (route['id'] ?? '').toString().trim();
+            final tripShift = (trip['schedule_type'] ?? '').toString().toLowerCase().trim();
+
+            final routeMatches = selectedRouteId.isEmpty || tripRouteId == selectedRouteId;
+            final shiftMatches = tripShift == selectedShift;
+            return routeMatches && shiftMatches;
+          })
+          .toList();
 
       setState(() {
         _trips = filtered;
@@ -232,26 +243,30 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
               const Divider(color: Color(0xFFE2E8F0)),
               const SizedBox(height: 16),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'ON-TIME STATUS',
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Color(0xFF94A3B8), letterSpacing: 1),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        (trip['delay_status'] ?? 'On Time').toString(),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: (trip['delay_status'] == 'Delayed') ? Colors.red.shade700 : Colors.blue.shade700,
-                          fontSize: 15,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ON-TIME STATUS',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Color(0xFF94A3B8), letterSpacing: 1),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        Text(
+                          (trip['delay_status'] ?? 'On Time').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: (trip['delay_status'] == 'Delayed') ? Colors.red.shade700 : Colors.blue.shade700,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 12),
                   SizedBox(
                     height: 44,
                     child: ElevatedButton(
@@ -266,6 +281,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF59E0B),
                         foregroundColor: const Color(0xFF1E293B),
+                        minimumSize: const Size(0, 44),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),

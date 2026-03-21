@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { supabase } from '../../lib/supabase';
+import { rebuildRouteGeometry } from '../../lib/routingApi';
 import { Stop, Route } from '../../types';
 import { useStore } from '../../store';
 import { ConfirmModal } from '../ui/Modal';
@@ -101,6 +102,17 @@ const StopTab = () => {
         if (error) throw error;
         addToast(`${clean.schedule_type === 'morning' ? 'Morning' : 'Evening'} checkpoint added`);
       }
+      try {
+        const geometryResult = await rebuildRouteGeometry(clean.route_id, clean.schedule_type);
+        if (geometryResult.ok) {
+          addToast('Road geometry refreshed');
+        } else if (geometryResult.pendingStops && geometryResult.message) {
+          addToast(geometryResult.message);
+        }
+      } catch (geometryErr: any) {
+        addToast(geometryErr.message || 'Stop saved, but geometry refresh failed.', 'error');
+      }
+
       reset({ route_id: data.route_id, stop_name: '', latitude: null as any, longitude: null as any, arrival_time: '', schedule_type: data.schedule_type });
       fetchStops(data.route_id);
     } catch (err: any) {
@@ -119,10 +131,26 @@ const StopTab = () => {
 
   const handleDelete = async () => {
     if (!deletingId) return;
+    const targetStop = allStops.find((stop) => stop.id === deletingId);
+
     try {
       const { error } = await supabase.from('stops').delete().eq('id', deletingId);
       if (error) throw error;
       addToast('Checkpoint removed');
+
+      if (targetStop?.route_id && targetStop?.schedule_type) {
+        try {
+          const geometryResult = await rebuildRouteGeometry(targetStop.route_id, targetStop.schedule_type);
+          if (geometryResult.ok) {
+            addToast('Road geometry refreshed');
+          } else if (geometryResult.pendingStops && geometryResult.message) {
+            addToast(geometryResult.message);
+          }
+        } catch (geometryErr: any) {
+          addToast(geometryErr.message || 'Stop removed, but geometry refresh failed.', 'error');
+        }
+      }
+
       if (selectedRouteId) fetchStops(selectedRouteId);
     } catch (err: any) {
       addToast(err.message || 'Deletion failed', 'error');

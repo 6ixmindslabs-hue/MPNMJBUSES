@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { supabase } from '../../lib/supabase';
+import { rebuildRouteGeometry } from '../../lib/routingApi';
 import { Route } from '../../types';
 import { useStore } from '../../store';
 import { TableSkeleton } from '../ui/Skeleton';
@@ -49,6 +50,17 @@ const RouteTab = () => {
         const { error } = await supabase.from('routes').update(updateData).eq('id', editingId);
         if (error) throw error;
         addToast('Architecture updated');
+        try {
+          const geometryResult = await rebuildRouteGeometry(editingId);
+          if (geometryResult.ok) {
+            addToast('Road geometry refreshed');
+          } else if (geometryResult.pendingStops && geometryResult.message) {
+            addToast(geometryResult.message);
+          }
+        } catch (geometryErr: any) {
+          addToast(geometryErr.message || 'Route updated, but geometry refresh failed.', 'error');
+        }
+
         setEditingId(null);
       } else {
         const { error } = await supabase.from('routes').insert([updateData]);

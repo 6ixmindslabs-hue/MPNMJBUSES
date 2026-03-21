@@ -84,7 +84,8 @@ class StudentApp extends StatelessWidget {
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFFF59E0B),
             foregroundColor: const Color(0xFF1E293B),
-            minimumSize: const Size.fromHeight(52),
+            // Keep a global minimum height without forcing infinite width in rows.
+            minimumSize: const Size(0, 52),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             elevation: 0,
             textStyle: const TextStyle(fontWeight: FontWeight.w800),

@@ -13,7 +13,9 @@ const express = require('express');
 const router = express.Router();
 const { supabaseAdmin } = require('../config/supabase');
 const { ACTIVE_TRIP_STATUSES } = require('../config/tripRules');
-const { buildLiveTripMeta, isTelemetryOnline } = require('../services/tripLiveService');
+const { buildLiveTripMeta } = require('../services/tripLiveService');
+const { buildLiveRouteSnapshot } = require('../services/liveRouteService');
+const { rebuildRouteGeometryForRoute } = require('../services/routeGeometryService');
 
 // ─── Auth Middleware ────────────────────────────────────────────────────────
 // Verifies driver credentials from the 'drivers' table using username+password.
@@ -139,19 +141,23 @@ function buildTripConflictMessage(conflicts, { driverId, busId }) {
 }
 
 async function fetchLatestTelemetryByTripIds(tripIds) {
-  if (!tripIds.length) return {};
+  const safeTripIds = (tripIds || []).filter(Boolean);
+  if (!safeTripIds.length) return {};
 
   const { data, error } = await supabaseAdmin
     .from('telemetry')
     .select('trip_id, latitude, longitude, speed, heading, timestamp')
-    .in('trip_id', tripIds)
+    .in('trip_id', safeTripIds)
     .order('timestamp', { ascending: false });
 
-  if (error) throw error;
+  if (error) {
+    console.error('[API] Failed to fetch latest telemetry:', error.message);
+    return {};
+  }
 
   const map = {};
   for (const row of data || []) {
-    if (!map[row.trip_id]) {
+    if (row?.trip_id && !map[row.trip_id]) {
       map[row.trip_id] = row;
     }
   }
@@ -170,16 +176,120 @@ async function fetchStopsByRouteShiftPairs(trips) {
   }
 
   for (const [, pair] of pairs) {
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('stops')
       .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
       .eq('route_id', pair.routeId)
       .eq('schedule_type', pair.shift)
       .order('arrival_time', { ascending: true });
+
+    if (error) {
+      console.error(
+        `[API] Failed to fetch stops for route ${pair.routeId} and shift ${pair.shift}:`,
+        error.message
+      );
+      keyToStops[`${pair.routeId}::${pair.shift}`] = [];
+      continue;
+    }
+
     keyToStops[`${pair.routeId}::${pair.shift}`] = data || [];
   }
 
   return keyToStops;
+}
+
+async function fetchLatestTelemetryRecord(tripId) {
+  const { data, error } = await supabaseAdmin
+    .from('telemetry')
+    .select('latitude, longitude, speed, heading, accuracy, timestamp')
+    .eq('trip_id', tripId)
+    .order('timestamp', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+async function fetchTripLiveContext(tripId) {
+  const { data: trip, error } = await supabaseAdmin
+    .from('trips')
+    .select(`
+      id,
+      status,
+      schedule_type,
+      schedule_id,
+      schedules:schedule_id (
+        id,
+        start_time,
+        end_time,
+        routes:route_id (*),
+        buses:bus_id (id, bus_number, bus_name),
+        drivers:driver_id (id, name, phone)
+      )
+    `)
+    .eq('id', tripId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!trip) return null;
+
+  const routeId = trip.schedules?.routes?.id;
+  let stops = [];
+
+  if (routeId) {
+    const { data: stopData, error: stopError } = await supabaseAdmin
+      .from('stops')
+      .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
+      .eq('route_id', routeId)
+      .eq('schedule_type', trip.schedule_type)
+      .order('arrival_time', { ascending: true });
+
+    if (stopError) throw stopError;
+    stops = stopData || [];
+  }
+
+  const latestTelemetry = await fetchLatestTelemetryRecord(tripId);
+
+  return {
+    trip,
+    stops,
+    latestTelemetry,
+  };
+}
+
+async function buildTripLiveRouteResponse(tripId, options = {}) {
+  const context = await fetchTripLiveContext(tripId);
+  if (!context) return null;
+
+  const snapshot = await buildLiveRouteSnapshot({
+    tripId,
+    routeRecord: context.trip.schedules?.routes || {},
+    scheduleType: context.trip.schedule_type,
+    stops: context.stops,
+    latestTelemetry: context.latestTelemetry,
+    includeFullGeometry: options.includeFullGeometry === true,
+    includeRecoveryGeometry: options.includeRecoveryGeometry !== false,
+  });
+
+  return {
+    trip_id: context.trip.id,
+    trip_status: context.trip.status,
+    schedule_type: context.trip.schedule_type,
+    ...snapshot,
+  };
+}
+
+function buildTripListMeta(snapshot) {
+  return {
+    is_online: snapshot.is_online,
+    last_seen_at: snapshot.last_seen_at,
+    next_stop: snapshot.next_stop,
+    eta_minutes: snapshot.eta_minutes,
+    delay_minutes: snapshot.delay_minutes,
+    delay_status: snapshot.delay_status,
+    distance_to_next_stop_m: snapshot.distance_to_next_stop_m,
+  };
 }
 
 async function fetchCurrentDriverAssignment(driverId) {
@@ -333,6 +443,21 @@ router.get('/routes', async (req, res) => {
   res.json(data);
 });
 
+router.post('/routes/:id/rebuild-geometry', async (req, res) => {
+  try {
+    const scheduleType = req.body?.schedule_type || req.query?.schedule_type || undefined;
+    const result = await rebuildRouteGeometryForRoute(req.params.id, { scheduleType });
+    return res.json({
+      ok: true,
+      ...result,
+    });
+  } catch (error) {
+    const message = error.message || 'Could not rebuild route geometry';
+    const status = message.includes('At least two ordered stops') ? 400 : 500;
+    return res.status(status).json({ error: message });
+  }
+});
+
 // ─── STOPS (public read — filtered by route and optionally by shift) ─────────
 // GET /api/stops?route_id=xxx&schedule_type=morning
 router.get('/stops', async (req, res) => {
@@ -424,70 +549,143 @@ router.post('/schedules/validate-assignment', async (req, res) => {
 // ─── TRIPS (active live trips for student app tracking) ─────────────────────
 // GET /api/trips/active — returns all currently active trips with live bus info
 router.get('/trips/active', async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from('trips')
-    .select(`
-      id,
-      status,
-      schedule_type,
-      started_at,
-      paused_at,
-      completed_at,
-      schedules:schedule_id (
-        id, start_time, end_time, schedule_type,
-        routes:route_id (id, route_name, start_location, end_location),
-        buses:bus_id (id, bus_number, bus_name),
-        drivers:driver_id (id, name, phone)
-      )
-    `)
-    .in('status', ACTIVE_TRIP_STATUSES)
-    .order('started_at', { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
   try {
+    const { data, error } = await supabaseAdmin
+    .from('trips')
+      .select(`
+        id,
+        status,
+        schedule_type,
+        started_at,
+        paused_at,
+        completed_at,
+        schedules:schedule_id (
+          id, start_time, end_time, schedule_type,
+          routes:route_id (*),
+          buses:bus_id (id, bus_number, bus_name),
+          drivers:driver_id (id, name, phone)
+        )
+      `)
+      .in('status', ACTIVE_TRIP_STATUSES)
+      .order('started_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
     const trips = data || [];
     const tripIds = trips.map((trip) => trip.id);
     const telemetryMap = await fetchLatestTelemetryByTripIds(tripIds);
     const stopsMap = await fetchStopsByRouteShiftPairs(trips);
 
-    const enriched = trips.map((trip) => {
-      const routeId = trip.schedules?.routes?.id;
-      const key = routeId ? `${routeId}::${trip.schedule_type}` : '';
-      const latestTelemetry = telemetryMap[trip.id] || null;
-      const liveMeta = buildLiveTripMeta({
-        latestTelemetry,
-        stops: stopsMap[key] || [],
-      });
+    const enriched = await Promise.all(trips.map(async (trip) => {
+      try {
+        const routeId = trip.schedules?.routes?.id;
+        const key = routeId ? `${routeId}::${trip.schedule_type}` : '';
+        const latestTelemetry = telemetryMap[trip.id] || null;
+        const snapshot = await buildLiveRouteSnapshot({
+          tripId: trip.id,
+          routeRecord: trip.schedules?.routes || {},
+          scheduleType: trip.schedule_type,
+          stops: stopsMap[key] || [],
+          latestTelemetry,
+          includeFullGeometry: false,
+          includeRecoveryGeometry: false,
+        });
 
-      return {
-        ...trip,
-        latest_telemetry: latestTelemetry,
-        ...liveMeta,
-      };
-    });
+        return {
+          ...trip,
+          latest_telemetry: latestTelemetry,
+          ...buildTripListMeta(snapshot),
+        };
+      } catch (tripErr) {
+        console.error(`[API] Failed to enrich trip ${trip?.id}:`, tripErr.message);
+        const latestTelemetry = telemetryMap[trip.id] || null;
+        const fallbackMeta = buildLiveTripMeta({
+          latestTelemetry,
+          stops: stopsMap[`${trip.schedules?.routes?.id || ''}::${trip.schedule_type}`] || [],
+        });
+        return {
+          ...trip,
+          latest_telemetry: latestTelemetry,
+          ...fallbackMeta,
+        };
+      }
+    }));
 
     res.json(enriched);
-  } catch (metricErr) {
-    res.status(500).json({ error: metricErr.message || 'Could not load active trips' });
+  } catch (routeErr) {
+    console.error('[API] trips/active failed:', routeErr.message);
+    res.status(500).json({ error: routeErr.message || 'Could not load active trips' });
+  }
+});
+
+router.get('/trips/:id/live-route', async (req, res) => {
+  try {
+    const payload = await buildTripLiveRouteResponse(req.params.id, {
+      includeFullGeometry: req.query.include_full_geometry === 'true',
+    });
+
+    if (!payload) {
+      return res.status(404).json({ error: 'Trip not found' });
+    }
+
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Could not load live route' });
   }
 });
 
 // GET /api/trips/:id/last-location — latest GPS point for a trip
 router.get('/trips/:id/last-location', async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from('telemetry')
-    .select('latitude, longitude, speed, heading, timestamp')
-    .eq('trip_id', req.params.id)
-    .order('timestamp', { ascending: false })
-    .limit(1)
-    .single();
-  if (error) return res.status(404).json({ error: 'No telemetry found' });
-  const isOnline = isTelemetryOnline(data.timestamp);
-  res.json({
-    ...data,
-    is_online: isOnline,
-    last_seen_at: data.timestamp,
-  });
+  try {
+    const payload = await buildTripLiveRouteResponse(req.params.id, {
+      includeFullGeometry: req.query.include_full_geometry === 'true',
+      includeRecoveryGeometry: false,
+    });
+
+    if (!payload) {
+      return res.status(404).json({ error: 'Trip not found' });
+    }
+
+    const displayLocation = payload.is_off_route
+      ? payload.raw_location || payload.snapped_location
+      : payload.snapped_location || payload.raw_location;
+
+    if (!displayLocation) {
+      return res.status(404).json({ error: 'No telemetry found' });
+    }
+
+    return res.json({
+      latitude: displayLocation.latitude,
+      longitude: displayLocation.longitude,
+      speed: payload.speed,
+      heading: payload.heading,
+      accuracy: payload.accuracy,
+      timestamp: payload.last_seen_at,
+      is_online: payload.is_online,
+      last_seen_at: payload.last_seen_at,
+      raw_location: payload.raw_location,
+      snapped_location: payload.snapped_location,
+      distance_from_route_m: payload.distance_from_route_m,
+      is_off_route: payload.is_off_route,
+      next_stop: payload.next_stop,
+      distance_to_next_stop_m: payload.distance_to_next_stop_m,
+      eta_minutes: payload.eta_minutes,
+      delay_minutes: payload.delay_minutes,
+      delay_status: payload.delay_status,
+      current_route_distance_m: payload.current_route_distance_m,
+      remaining_distance_m: payload.remaining_distance_m,
+      full_route_geometry: payload.full_route_geometry,
+      passed_geometry: payload.passed_geometry,
+      next_stop_geometry: payload.next_stop_geometry,
+      remaining_geometry: payload.remaining_geometry,
+      recovery_geometry: payload.recovery_geometry,
+      stops: payload.stops,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Could not load last location' });
+  }
 });
 
 // POST /api/trips — driver starts a trip (links to a schedule)
