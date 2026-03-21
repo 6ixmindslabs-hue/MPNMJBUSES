@@ -52,7 +52,11 @@ const ScheduleTab = () => {
       const validationRes = await fetch(`${TRACKING_API_BASE}/schedules/validate-assignment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driver_id: data.driver_id, bus_id: data.bus_id }),
+        body: JSON.stringify({
+          driver_id: data.driver_id,
+          bus_id: data.bus_id,
+          schedule_id: editingId || null,
+        }),
       });
 
       if (!validationRes.ok) {

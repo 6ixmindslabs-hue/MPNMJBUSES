@@ -394,7 +394,7 @@ router.get('/schedules', async (req, res) => {
 // POST /api/schedules/validate-assignment
 // UX validation for admin before creating/updating a schedule.
 router.post('/schedules/validate-assignment', async (req, res) => {
-  const { driver_id, bus_id } = req.body || {};
+  const { driver_id, bus_id, schedule_id } = req.body || {};
   if (!driver_id || !bus_id) {
     return res.status(400).json({ error: 'driver_id and bus_id are required' });
   }
@@ -404,7 +404,11 @@ router.post('/schedules/validate-assignment', async (req, res) => {
       driverId: driver_id,
       busId: bus_id,
     });
-    const conflictPayload = buildTripConflictMessage(conflicts, {
+    const filteredConflicts = schedule_id
+      ? conflicts.filter((trip) => trip.schedule_id !== schedule_id)
+      : conflicts;
+
+    const conflictPayload = buildTripConflictMessage(filteredConflicts, {
       driverId: driver_id,
       busId: bus_id,
     });
