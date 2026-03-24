@@ -140,8 +140,8 @@ function parseStoredGeometry(geometry, scheduleType) {
   }
 
   if (geometry.shifts && typeof geometry.shifts === 'object') {
-    if (scheduleType && geometry.shifts[scheduleType]) {
-      return geometry.shifts[scheduleType];
+    if (scheduleType) {
+      return geometry.shifts[scheduleType] || null;
     }
     if (geometry.shifts.default) {
       return geometry.shifts.default;
@@ -152,6 +152,10 @@ function parseStoredGeometry(geometry, scheduleType) {
 
   if (scheduleType && geometry[scheduleType]) {
     return geometry[scheduleType];
+  }
+
+  if (scheduleType) {
+    return null;
   }
 
   if (geometry.polyline || geometry.coordinates) {
@@ -170,6 +174,10 @@ function decodeStoredRouteGeometry(routeRecord, scheduleType) {
 
   if (storedEntry?.coordinates) {
     return normalizePointList(storedEntry.coordinates);
+  }
+
+  if (scheduleType) {
+    return [];
   }
 
   if (routeRecord?.polyline) {

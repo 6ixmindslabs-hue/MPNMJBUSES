@@ -61,7 +61,8 @@ function setupWebSocketServer(server) {
           const { data: trip, error: tripErr } = await supabaseAdmin
             .from('trips')
             .select(`
-              id, status, driver_id, schedule_type,
+              id, route_id, status, driver_id, schedule_type,
+              trip_route:route_id (id, start_location, end_location),
               schedules:schedule_id (
                 routes:route_id (id, start_location, end_location),
                 buses:bus_id (id, bus_number)
@@ -86,7 +87,7 @@ function setupWebSocketServer(server) {
           const { data: stops } = await supabaseAdmin
             .from('stops')
             .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
-            .eq('route_id', trip.schedules?.routes?.id)
+            .eq('route_id', trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id)
             .eq('schedule_type', trip.schedule_type)
             .order('arrival_time', { ascending: true });
 
@@ -101,7 +102,7 @@ function setupWebSocketServer(server) {
             type: 'AUTH_OK',
             payload: {
               tripId,
-              route: trip.schedules?.routes,
+              route: trip.trip_route || trip.schedules?.routes,
               bus: trip.schedules?.buses,
               stops: stops || [],
               scheduleType: trip.schedule_type,

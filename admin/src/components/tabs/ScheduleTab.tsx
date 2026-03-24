@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { supabase } from '../../lib/supabase';
+import { rebuildRouteGeometry } from '../../lib/routingApi';
 import { Schedule, Route, Bus, Driver } from '../../types';
 import { useStore } from '../../store';
 import { TableSkeleton } from '../ui/Skeleton';
@@ -23,6 +24,44 @@ const ScheduleTab = () => {
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<Schedule>();
 
   const selectedRouteId = watch('route_id');
+
+  const ensureShiftRouteReady = async (routeId: string, scheduleType: Schedule['schedule_type']) => {
+    const { count, error } = await supabase
+      .from('stops')
+      .select('id', { count: 'exact', head: true })
+      .eq('route_id', routeId)
+      .eq('schedule_type', scheduleType);
+
+    if (error) throw error;
+    if ((count || 0) < 2) {
+      throw new Error(`Add at least 2 ${scheduleType} stops before saving this schedule.`);
+    }
+
+    const geometryResult = await rebuildRouteGeometry(routeId, scheduleType);
+    if (!geometryResult.ok) {
+      throw new Error(geometryResult.message || `Unable to build ${scheduleType} route geometry.`);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    const sub = supabase.channel('schedules').on('postgres_changes' as any, { event: '*', table: 'schedules' }, fetchData).subscribe();
+    return () => { supabase.removeChannel(sub); };
+  }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    const { data: routeData } = await supabase.from('routes').select('*');
+    const { data: busData } = await supabase.from('buses').select('*').eq('status', 'active');
+    const { data: driverData } = await supabase.from('drivers').select('*').eq('status', 'active');
+    const { data: scheduleData } = await supabase.from('schedules').select('*, routes(start_location, end_location), buses(bus_number), drivers(name)').order('created_at', { ascending: false });
+    
+    if (routeData) setRoutes(routeData);
+    if (busData) setBuses(busData);
+    if (driverData) setDrivers(driverData);
+    if (scheduleData) setSchedules(scheduleData);
+    setLoading(false);
+  };
 
   useEffect(() => {
     fetchData();
@@ -56,6 +95,7 @@ const ScheduleTab = () => {
           driver_id: data.driver_id,
           bus_id: data.bus_id,
           schedule_id: editingId || null,
+          schedule_type: data.schedule_type,
         }),
       });
 
@@ -63,6 +103,8 @@ const ScheduleTab = () => {
         const payload = await validationRes.json().catch(() => ({}));
         throw new Error(payload.message || payload.error || 'Selected driver/bus is already in an active trip');
       }
+
+      await ensureShiftRouteReady(data.route_id, data.schedule_type);
 
       if (editingId) {
         const { error } = await supabase.from('schedules').update(updateData).eq('id', editingId);

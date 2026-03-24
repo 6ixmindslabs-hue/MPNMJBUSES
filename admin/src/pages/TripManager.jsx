@@ -158,7 +158,8 @@ const TripManager = () => {
            </div>
         ) : trips.map((trip) => {
           const ui = getStatusUI(trip.status);
-          const isMorning = trip.shift === 'morning';
+          const tripShift = trip.schedule_type || trip.shift || 'morning';
+          const isMorning = tripShift === 'morning';
           const liveMeta = activeTripMeta[trip.id];
           
           return (
@@ -172,7 +173,7 @@ const TripManager = () => {
                      {isMorning ? <Sun size={32} strokeWidth={2.5} /> : <Moon size={32} strokeWidth={2.5} />}
                   </div>
                   <div>
-                     <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${isMorning ? 'text-amber-600' : 'text-indigo-600'}`}>{trip.shift} Session</p>
+                     <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${isMorning ? 'text-amber-600' : 'text-indigo-600'}`}>{tripShift} Session</p>
                      <p className="text-lg font-black text-slate-900 leading-tight mt-1">{format(new Date(trip.scheduled_start_time), 'hh:mm a')}</p>
                   </div>
                </div>
@@ -269,7 +270,7 @@ const TripManager = () => {
                     </div>
                     <div className="w-1 h-1 rounded-full bg-slate-300"></div>
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                       {selectedTrip.shift} Shift
+                       {(selectedTrip.schedule_type || selectedTrip.shift || 'morning')} Shift
                     </div>
                  </div>
               </div>

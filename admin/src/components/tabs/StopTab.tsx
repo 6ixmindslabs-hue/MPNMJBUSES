@@ -30,6 +30,7 @@ const eveningIcon = L.divIcon({
 });
 
 type ShiftType = 'morning' | 'evening';
+type GeometryTarget = { route_id: string; schedule_type: ShiftType };
 
 // ── Component ────────────────────────────────────────────
 const StopTab = () => {
@@ -77,6 +78,25 @@ const StopTab = () => {
   // Filtered stops for the current viewShift tab
   const filteredStops = allStops.filter(s => (s as any).schedule_type === viewShift);
 
+  const rebuildGeometryTargets = async (targets: GeometryTarget[]) => {
+    const uniqueTargets = targets.filter((target, index, list) =>
+      list.findIndex(
+        (entry) =>
+          entry.route_id === target.route_id &&
+          entry.schedule_type === target.schedule_type
+      ) === index
+    );
+
+    for (const target of uniqueTargets) {
+      const geometryResult = await rebuildRouteGeometry(target.route_id, target.schedule_type);
+      if (geometryResult.ok) {
+        addToast('Road geometry refreshed');
+      } else if (geometryResult.pendingStops && geometryResult.message) {
+        addToast(geometryResult.message);
+      }
+    }
+  };
+
   // Map markers for all stops, coloured by shift
   const MapHandler = () => {
     useMapEvents({
@@ -91,6 +111,9 @@ const StopTab = () => {
   const onSubmit = async (data: any) => {
     setIsSaving(true);
     const { id, created_at, routes: _r, ...clean } = data;
+    const originalStop = editingId
+      ? allStops.find((stop) => stop.id === editingId)
+      : null;
     try {
       if (editingId) {
         const { error } = await supabase.from('stops').update(clean).eq('id', editingId);
@@ -103,12 +126,26 @@ const StopTab = () => {
         addToast(`${clean.schedule_type === 'morning' ? 'Morning' : 'Evening'} checkpoint added`);
       }
       try {
-        const geometryResult = await rebuildRouteGeometry(clean.route_id, clean.schedule_type);
-        if (geometryResult.ok) {
-          addToast('Road geometry refreshed');
-        } else if (geometryResult.pendingStops && geometryResult.message) {
-          addToast(geometryResult.message);
+        const targets: GeometryTarget[] = [
+          {
+            route_id: clean.route_id,
+            schedule_type: clean.schedule_type,
+          },
+        ];
+
+        if (
+          originalStop?.route_id &&
+          originalStop?.schedule_type &&
+          (originalStop.route_id !== clean.route_id ||
+            originalStop.schedule_type !== clean.schedule_type)
+        ) {
+          targets.push({
+            route_id: originalStop.route_id,
+            schedule_type: originalStop.schedule_type as ShiftType,
+          });
         }
+
+        await rebuildGeometryTargets(targets);
       } catch (geometryErr: any) {
         addToast(geometryErr.message || 'Stop saved, but geometry refresh failed.', 'error');
       }

@@ -194,8 +194,9 @@ BEGIN
       WHERE t.driver_id = NEW.driver_id
         AND t.schedule_id IS DISTINCT FROM OLD.id
         AND t.status IN ('started', 'running', 'paused')
+        AND t.schedule_type = NEW.schedule_type
     ) THEN
-      RAISE EXCEPTION 'Selected driver already has an active trip.';
+      RAISE EXCEPTION 'Selected driver already has an active trip in this shift.';
     END IF;
 
     IF EXISTS (
@@ -204,8 +205,9 @@ BEGIN
       WHERE t.bus_id = NEW.bus_id
         AND t.schedule_id IS DISTINCT FROM OLD.id
         AND t.status IN ('started', 'running', 'paused')
+        AND t.schedule_type = NEW.schedule_type
     ) THEN
-      RAISE EXCEPTION 'Selected bus already has an active trip.';
+      RAISE EXCEPTION 'Selected bus already has an active trip in this shift.';
     END IF;
   ELSE
     IF EXISTS (
@@ -213,8 +215,9 @@ BEGIN
       FROM public.trips t
       WHERE t.driver_id = NEW.driver_id
         AND t.status IN ('started', 'running', 'paused')
+        AND t.schedule_type = NEW.schedule_type
     ) THEN
-      RAISE EXCEPTION 'Selected driver already has an active trip.';
+      RAISE EXCEPTION 'Selected driver already has an active trip in this shift.';
     END IF;
 
     IF EXISTS (
@@ -222,8 +225,9 @@ BEGIN
       FROM public.trips t
       WHERE t.bus_id = NEW.bus_id
         AND t.status IN ('started', 'running', 'paused')
+        AND t.schedule_type = NEW.schedule_type
     ) THEN
-      RAISE EXCEPTION 'Selected bus already has an active trip.';
+      RAISE EXCEPTION 'Selected bus already has an active trip in this shift.';
     END IF;
   END IF;
 

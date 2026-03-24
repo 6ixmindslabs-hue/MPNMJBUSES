@@ -972,6 +972,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   int _resolveNextStopIndex(
     List<Map<String, dynamic>> stops,
     Map<String, dynamic> payload,
+    double currentRouteDistanceMeters,
   ) {
     if (stops.isEmpty) return 0;
 
@@ -991,7 +992,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       }
     }
 
-    return 0;
+    for (var index = 0; index < stops.length; index += 1) {
+      final stopRouteDistance = _parseDouble(stops[index]['route_distance_m']);
+      if (stopRouteDistance + _stopArrivalRadiusMeters >= currentRouteDistanceMeters) {
+        return index;
+      }
+    }
+
+    return math.max(stops.length - 1, 0);
   }
 
   String _formatDistance(double distanceMeters) {
@@ -1247,7 +1255,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final fullRouteGeometry = _parseGeometry(payload['full_route_geometry']);
       final routeGeometryForDisplay =
           fullRouteGeometry.isNotEmpty ? fullRouteGeometry : _fullRouteGeometry;
-      final nextStopIndex = _resolveNextStopIndex(routeStops, payload);
+      final routeDistanceMeters = _parseDouble(
+        payload['current_route_distance_m'],
+      );
+      final nextStopIndex = _resolveNextStopIndex(
+        routeStops,
+        payload,
+        routeDistanceMeters,
+      );
       final nextStopLocation = _resolveNextStopLocation(
         routeStops,
         nextStopIndex,
@@ -1259,9 +1274,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final speedKmh = _parseDouble(payload['speed']);
       final serverHeadingDeg = _normalizeAngle(
         _parseDouble(payload['heading']),
-      );
-      final routeDistanceMeters = _parseDouble(
-        payload['current_route_distance_m'],
       );
       final telemetryTimestamp = payload['last_seen_at'] is String
           ? DateTime.tryParse(payload['last_seen_at'])?.toLocal()

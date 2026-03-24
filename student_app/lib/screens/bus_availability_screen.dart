@@ -52,6 +52,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       final List<dynamic> data = jsonDecode(response.body);
       final selectedRouteId =
           (widget.fromStop['route_id'] ?? '').toString().trim();
+      final destinationRouteId =
+          (widget.toStop['route_id'] ?? '').toString().trim();
       final selectedShift = widget.shift.toLowerCase().trim();
 
       final List<Map<String, dynamic>> filtered = data
@@ -66,8 +68,10 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         final tripShift =
             (trip['schedule_type'] ?? '').toString().toLowerCase().trim();
 
-        final routeMatches =
-            selectedRouteId.isEmpty || tripRouteId == selectedRouteId;
+        final routeMatches = selectedRouteId.isEmpty
+            ? destinationRouteId.isEmpty || tripRouteId == destinationRouteId
+            : tripRouteId == selectedRouteId &&
+                (destinationRouteId.isEmpty || tripRouteId == destinationRouteId);
         final shiftMatches = tripShift == selectedShift;
         return routeMatches && shiftMatches;
       }).toList();

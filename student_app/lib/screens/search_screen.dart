@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/constants.dart';
 import 'bus_availability_screen.dart';
 
@@ -14,16 +16,70 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   List<Map<String, dynamic>> _stops = [];
+  List<Map<String, dynamic>> _recentSearches = [];
   bool _loading = true;
   String? _loadError;
   String? _fromStopId;
   String? _toStopId;
   String _shift = 'morning';
 
+  static const String _recentSearchesKey = 'student_recent_searches';
+
   @override
   void initState() {
     super.initState();
     _fetchStops();
+    _loadRecentSearches();
+  }
+
+  Future<void> _loadRecentSearches() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? jsonStr = prefs.getString(_recentSearchesKey);
+      if (jsonStr != null) {
+        final List<dynamic> decoded = jsonDecode(jsonStr);
+        if (mounted) {
+          setState(() {
+            _recentSearches = decoded.cast<Map<String, dynamic>>();
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading recent searches: $e');
+    }
+  }
+
+  Future<void> _saveRecentSearch(Map<String, dynamic> fromStop, Map<String, dynamic> toStop) async {
+    try {
+      final searchEntry = {
+        'from_id': fromStop['id'],
+        'from_name': fromStop['stop_name'],
+        'to_id': toStop['id'],
+        'to_name': toStop['stop_name'],
+        'shift': _shift,
+      };
+
+      final filteredList = _recentSearches.where((s) => 
+        !(s['from_id'] == searchEntry['from_id'] && 
+          s['to_id'] == searchEntry['to_id'] && 
+          s['shift'] == searchEntry['shift'])
+      ).toList();
+
+      filteredList.insert(0, searchEntry);
+      
+      if (filteredList.length > 5) {
+        filteredList.removeRange(5, filteredList.length);
+      }
+
+      setState(() {
+        _recentSearches = filteredList;
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_recentSearchesKey, jsonEncode(filteredList));
+    } catch (e) {
+      debugPrint('Error saving recent search: $e');
+    }
   }
 
   Future<void> _fetchStops() async {
@@ -76,6 +132,51 @@ class _SearchScreenState extends State<SearchScreen> {
 
     final fromStop = _stops.firstWhere((s) => s['id'] == _fromStopId);
     final toStop = _stops.firstWhere((s) => s['id'] == _toStopId);
+    final fromRouteId = (fromStop['route_id'] ?? '').toString().trim();
+    final toRouteId = (toStop['route_id'] ?? '').toString().trim();
+
+    if (fromRouteId.isEmpty || toRouteId.isEmpty || fromRouteId != toRouteId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Pickup and destination must belong to the same route for the selected shift.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final routeShiftStops = _stops
+        .where(
+          (stop) =>
+              stop['route_id']?.toString() == fromRouteId &&
+              stop['schedule_type']?.toString() == _shift,
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a['arrival_time'] ?? '')
+            .toString()
+            .compareTo((b['arrival_time'] ?? '').toString()),
+      );
+    final fromIndex = routeShiftStops.indexWhere(
+      (stop) => stop['id']?.toString() == _fromStopId,
+    );
+    final toIndex = routeShiftStops.indexWhere(
+      (stop) => stop['id']?.toString() == _toStopId,
+    );
+
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= toIndex) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Choose pickup and destination in the valid $_shift route order.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    _saveRecentSearch(fromStop, toStop);
 
     Navigator.push(
       context,
@@ -219,6 +320,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                   fontSize: 12,
                                 ),
                               ),
+                            const SizedBox(height: 32),
+                            _buildRecentSearches(),
                           ],
                         ),
             ),
@@ -267,6 +370,21 @@ class _SearchScreenState extends State<SearchScreen> {
     required String? value,
     required Function(String?) onChanged,
   }) {
+    final shiftStops = _stops
+        .where((s) => s['schedule_type'] == _shift)
+        .cast<Map<String, dynamic>>()
+        .toList();
+    final stopNameCounts = <String, int>{};
+    for (final stop in shiftStops) {
+      final key = (stop['stop_name'] ?? '').toString().trim().toLowerCase();
+      stopNameCounts[key] = (stopNameCounts[key] ?? 0) + 1;
+    }
+
+    // Prevent assertion crash if the currently selected value is NOT in the filtered dropdown list
+    final bool hasValidValue =
+        value != null && shiftStops.any((s) => s['id'] == value);
+    final safeValue = hasValidValue ? value : null;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
@@ -295,17 +413,17 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           const SizedBox(height: 4),
           DropdownButton<String>(
-            value: value,
+            value: safeValue,
             isExpanded: true,
             underline: const SizedBox(),
             hint: const Text('Choose a stop...'),
             icon: const Icon(LucideIcons.chevronDown, size: 16),
             onChanged: onChanged,
-            items: _stops.map((stop) {
+            items: shiftStops.map((stop) {
               return DropdownMenuItem<String>(
                 value: stop['id'],
                 child: Text(
-                  stop['stop_name'],
+                  _displayStopLabel(stop, stopNameCounts),
                   style: const TextStyle(
                       fontWeight: FontWeight.w700, fontSize: 16),
                 ),
@@ -337,7 +455,15 @@ class _SearchScreenState extends State<SearchScreen> {
     final active = _shift == value;
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _shift = value),
+        onTap: () {
+          if (!active) {
+            setState(() {
+              _shift = value;
+              _fromStopId = null;
+              _toStopId = null;
+            });
+          }
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
@@ -381,6 +507,193 @@ class _SearchScreenState extends State<SearchScreen> {
   String _selectedStopName(String id) {
     final match = _stops.where((s) => s['id'] == id);
     if (match.isEmpty) return 'Unknown stop';
-    return match.first['stop_name']?.toString() ?? 'Unknown stop';
+
+    final stop = Map<String, dynamic>.from(match.first);
+    final stopNameCounts = <String, int>{};
+    for (final item in _stops.where((s) => s['schedule_type'] == stop['schedule_type'])) {
+      final key = (item['stop_name'] ?? '').toString().trim().toLowerCase();
+      stopNameCounts[key] = (stopNameCounts[key] ?? 0) + 1;
+    }
+
+    return _displayStopLabel(stop, stopNameCounts);
+  }
+
+  String _displayStopLabel(
+    Map<String, dynamic> stop,
+    Map<String, int> stopNameCounts,
+  ) {
+    final stopName = stop['stop_name']?.toString().trim();
+    if (stopName == null || stopName.isEmpty) return 'Unknown stop';
+
+    final duplicateCount = stopNameCounts[stopName.toLowerCase()] ?? 0;
+    if (duplicateCount <= 1) {
+      return stopName;
+    }
+
+    return '$stopName (${_routeLabelForStop(stop)})';
+  }
+
+  String _routeLabelForStop(Map<String, dynamic> stop) {
+    final route = stop['routes'];
+    if (route is Map) {
+      final start = route['start_location']?.toString().trim();
+      final end = route['end_location']?.toString().trim();
+      if ((start?.isNotEmpty ?? false) && (end?.isNotEmpty ?? false)) {
+        return '$start -> $end';
+      }
+
+      final routeName = route['route_name']?.toString().trim();
+      if (routeName?.isNotEmpty ?? false) {
+        return routeName!;
+      }
+    }
+
+    final routeId = stop['route_id']?.toString().trim();
+    if (routeId?.isNotEmpty ?? false) {
+      return 'Route ${routeId!.substring(0, math.min(routeId.length, 6))}';
+    }
+
+    return 'Route';
+  }
+
+  Widget _buildRecentSearches() {
+    if (_recentSearches.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'RECENT SEARCHES',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF94A3B8),
+                letterSpacing: 1.5,
+              ),
+            ),
+            if (_recentSearches.isNotEmpty)
+              GestureDetector(
+                onTap: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.remove(_recentSearchesKey);
+                  setState(() => _recentSearches.clear());
+                },
+                child: const Text(
+                  'CLEAR',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFFF59E0B),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 104,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _recentSearches.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final search = _recentSearches[index];
+              final isMorning = search['shift'] == 'morning';
+              return GestureDetector(
+                onTap: () {
+                  final fromExists = _stops.any((s) => s['id'] == search['from_id']);
+                  final toExists = _stops.any((s) => s['id'] == search['to_id']);
+
+                  if (!fromExists || !toExists) {
+                     ScaffoldMessenger.of(context).showSnackBar(
+                       const SnackBar(content: Text('Saved route is no longer available.')),
+                     );
+                     return;
+                  }
+
+                  setState(() {
+                    _shift = search['shift'] ?? 'morning';
+                    _fromStopId = search['from_id'];
+                    _toStopId = search['to_id'];
+                  });
+                  _searchBuses();
+                },
+                child: Container(
+                  width: 220,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.03),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            isMorning ? LucideIcons.sun : LucideIcons.moon,
+                            size: 14,
+                            color: isMorning ? const Color(0xFFF59E0B) : const Color(0xFF6366F1),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              search['from_name'] ?? 'Stop',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF1E293B),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      const Padding(
+                        padding: EdgeInsets.only(left: 6),
+                        child: Icon(LucideIcons.arrowDown, size: 14, color: Color(0xFFCBD5E1)),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(LucideIcons.mapPin, size: 14, color: Colors.transparent),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              search['to_name'] ?? 'Stop',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
   }
 }

@@ -66,6 +66,79 @@ function normalizeBus(bus) {
   };
 }
 
+function parseScheduleTimeForToday(timeValue) {
+  if (!timeValue || typeof timeValue !== 'string') return null;
+
+  const [hours, minutes, seconds = '00'] = timeValue.split(':');
+  if (!hours || !minutes) return null;
+
+  const now = new Date();
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    Number(hours),
+    Number(minutes),
+    Number(seconds),
+    0
+  );
+}
+
+function pickBestScheduleForNow(schedules) {
+  if (!Array.isArray(schedules) || schedules.length === 0) return null;
+
+  const now = new Date();
+  const enriched = schedules.map((schedule) => {
+    const start = parseScheduleTimeForToday(schedule.start_time);
+    const end = parseScheduleTimeForToday(schedule.end_time);
+    const isActive = start && end ? now >= start && now <= end : false;
+    const upcomingGapMs = start ? start.getTime() - now.getTime() : Number.POSITIVE_INFINITY;
+    const elapsedGapMs = start ? now.getTime() - start.getTime() : Number.POSITIVE_INFINITY;
+
+    return {
+      schedule,
+      isActive,
+      upcomingGapMs,
+      elapsedGapMs,
+    };
+  });
+
+  const activeSchedule = enriched
+    .filter((entry) => entry.isActive)
+    .sort((a, b) => a.upcomingGapMs - b.upcomingGapMs)[0];
+  if (activeSchedule) {
+    return activeSchedule.schedule;
+  }
+
+  const nextUpcoming = enriched
+    .filter((entry) => entry.upcomingGapMs >= 0)
+    .sort((a, b) => a.upcomingGapMs - b.upcomingGapMs)[0];
+  if (nextUpcoming) {
+    return nextUpcoming.schedule;
+  }
+
+  return enriched.sort((a, b) => a.elapsedGapMs - b.elapsedGapMs)[0]?.schedule || null;
+}
+
+function normalizeDriverAssignment({
+  id,
+  schedule_id,
+  status,
+  schedule_type,
+  start_time,
+  end_time,
+  routes,
+  buses,
+  source,
+}) {
+  return {
+    id,
+    schedule_id,
+    status: status === 'started' ? 'running' : status,
+    shift: schedule_type,
+    start_time,
+    end_time,
+
 function normalizeDriverAssignment({
   id,
   schedule_id,
@@ -90,13 +163,17 @@ function normalizeDriverAssignment({
   };
 }
 
-async function findActiveTripConflicts({ driverId, busId }) {
+async function findActiveTripConflicts({ driverId, busId, scheduleType }) {
   let query = supabaseAdmin
     .from('trips')
     .select('id, schedule_id, driver_id, bus_id, status, started_at')
-    .in('status', ACTIVE_TRIP_STATUSES)
-    .order('started_at', { ascending: false })
-    .limit(5);
+    .in('status', ACTIVE_TRIP_STATUSES);
+
+  if (scheduleType) {
+    query = query.eq('schedule_type', scheduleType);
+  }
+
+  query = query.order('started_at', { ascending: false }).limit(5);
 
   if (driverId && busId) {
     query = query.or(`driver_id.eq.${driverId},bus_id.eq.${busId}`);
@@ -168,7 +245,7 @@ async function fetchStopsByRouteShiftPairs(trips) {
   const keyToStops = {};
   const pairs = new Map();
   for (const trip of trips) {
-    const routeId = trip.schedules?.routes?.id;
+    const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
     const shift = trip.schedule_type;
     if (!routeId || !shift) continue;
     const key = `${routeId}::${shift}`;
@@ -216,9 +293,11 @@ async function fetchTripLiveContext(tripId) {
     .from('trips')
     .select(`
       id,
+      route_id,
       status,
       schedule_type,
       schedule_id,
+      trip_route:route_id (*),
       schedules:schedule_id (
         id,
         start_time,
@@ -234,7 +313,7 @@ async function fetchTripLiveContext(tripId) {
   if (error) throw error;
   if (!trip) return null;
 
-  const routeId = trip.schedules?.routes?.id;
+  const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
   let stops = [];
 
   if (routeId) {
@@ -264,7 +343,7 @@ async function buildTripLiveRouteResponse(tripId, options = {}) {
 
   const snapshot = await buildLiveRouteSnapshot({
     tripId,
-    routeRecord: context.trip.schedules?.routes || {},
+    routeRecord: context.trip.trip_route || context.trip.schedules?.routes || {},
     scheduleType: context.trip.schedule_type,
     stops: context.stops,
     latestTelemetry: context.latestTelemetry,
@@ -331,10 +410,7 @@ async function fetchCurrentDriverAssignment(driverId) {
     });
   }
 
-  const currentHour = new Date().getHours();
-  const inferredShift = currentHour < 15 ? 'morning' : 'evening';
-
-  let scheduleQuery = supabaseAdmin
+  const { data: schedules, error: scheduleErr } = await supabaseAdmin
     .from('schedules')
     .select(`
       id,
@@ -345,34 +421,11 @@ async function fetchCurrentDriverAssignment(driverId) {
       buses:bus_id (id, bus_number, bus_name, capacity)
     `)
     .eq('driver_id', driverId)
-    .eq('schedule_type', inferredShift)
-    .order('start_time', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .order('start_time', { ascending: true });
 
-  let { data: schedule, error: scheduleErr } = await scheduleQuery;
   if (scheduleErr) throw scheduleErr;
 
-  if (!schedule) {
-    const fallbackSchedule = await supabaseAdmin
-      .from('schedules')
-      .select(`
-        id,
-        schedule_type,
-        start_time,
-        end_time,
-        routes:route_id (id, route_name, start_location, end_location),
-        buses:bus_id (id, bus_number, bus_name, capacity)
-      `)
-      .eq('driver_id', driverId)
-      .order('start_time', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    schedule = fallbackSchedule.data;
-    scheduleErr = fallbackSchedule.error;
-    if (scheduleErr) throw scheduleErr;
-  }
+  const schedule = pickBestScheduleForNow(schedules || []);
 
   if (!schedule) return null;
 
@@ -464,7 +517,16 @@ router.get('/stops', async (req, res) => {
   const { route_id, schedule_type } = req.query;
   let query = supabaseAdmin
     .from('stops')
-    .select('id, route_id, stop_name, latitude, longitude, arrival_time, schedule_type')
+    .select(`
+      id,
+      route_id,
+      stop_name,
+      latitude,
+      longitude,
+      arrival_time,
+      schedule_type,
+      routes:route_id (id, route_name, start_location, end_location)
+    `)
     .order('schedule_type', { ascending: true })
     .order('arrival_time', { ascending: true });
 
@@ -519,7 +581,7 @@ router.get('/schedules', async (req, res) => {
 // POST /api/schedules/validate-assignment
 // UX validation for admin before creating/updating a schedule.
 router.post('/schedules/validate-assignment', async (req, res) => {
-  const { driver_id, bus_id, schedule_id } = req.body || {};
+  const { driver_id, bus_id, schedule_id, schedule_type } = req.body || {};
   if (!driver_id || !bus_id) {
     return res.status(400).json({ error: 'driver_id and bus_id are required' });
   }
@@ -528,6 +590,7 @@ router.post('/schedules/validate-assignment', async (req, res) => {
     const conflicts = await findActiveTripConflicts({
       driverId: driver_id,
       busId: bus_id,
+      scheduleType: schedule_type,
     });
     const filteredConflicts = schedule_id
       ? conflicts.filter((trip) => trip.schedule_id !== schedule_id)
@@ -554,11 +617,13 @@ router.get('/trips/active', async (req, res) => {
     .from('trips')
       .select(`
         id,
+        route_id,
         status,
         schedule_type,
         started_at,
         paused_at,
         completed_at,
+        trip_route:route_id (*),
         schedules:schedule_id (
           id, start_time, end_time, schedule_type,
           routes:route_id (*),
@@ -580,12 +645,12 @@ router.get('/trips/active', async (req, res) => {
 
     const enriched = await Promise.all(trips.map(async (trip) => {
       try {
-        const routeId = trip.schedules?.routes?.id;
+        const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
         const key = routeId ? `${routeId}::${trip.schedule_type}` : '';
         const latestTelemetry = telemetryMap[trip.id] || null;
         const snapshot = await buildLiveRouteSnapshot({
           tripId: trip.id,
-          routeRecord: trip.schedules?.routes || {},
+          routeRecord: trip.trip_route || trip.schedules?.routes || {},
           scheduleType: trip.schedule_type,
           stops: stopsMap[key] || [],
           latestTelemetry,
@@ -603,162 +668,10 @@ router.get('/trips/active', async (req, res) => {
         const latestTelemetry = telemetryMap[trip.id] || null;
         const fallbackMeta = buildLiveTripMeta({
           latestTelemetry,
-          stops: stopsMap[`${trip.schedules?.routes?.id || ''}::${trip.schedule_type}`] || [],
+          stops: stopsMap[`${trip.route_id || trip.trip_route?.id || ''}::${trip.schedule_type}`] || [],
         });
         return {
           ...trip,
-          latest_telemetry: latestTelemetry,
-          ...fallbackMeta,
-        };
-      }
-    }));
-
-    res.json(enriched);
-  } catch (routeErr) {
-    console.error('[API] trips/active failed:', routeErr.message);
-    res.status(500).json({ error: routeErr.message || 'Could not load active trips' });
-  }
-});
-
-router.get('/trips/:id/live-route', async (req, res) => {
-  try {
-    const payload = await buildTripLiveRouteResponse(req.params.id, {
-      includeFullGeometry: req.query.include_full_geometry === 'true',
-      includeRecoveryGeometry: req.query.include_recovery_geometry !== 'false',
-    });
-
-    if (!payload) {
-      return res.status(404).json({ error: 'Trip not found' });
-    }
-
-    return res.json(payload);
-  } catch (error) {
-    return res.status(500).json({ error: error.message || 'Could not load live route' });
-  }
-});
-
-// GET /api/trips/:id/last-location — latest GPS point for a trip
-router.get('/trips/:id/last-location', async (req, res) => {
-  try {
-    const payload = await buildTripLiveRouteResponse(req.params.id, {
-      includeFullGeometry: req.query.include_full_geometry === 'true',
-      includeRecoveryGeometry: false,
-    });
-
-    if (!payload) {
-      return res.status(404).json({ error: 'Trip not found' });
-    }
-
-    const displayLocation = payload.is_off_route
-      ? payload.raw_location || payload.snapped_location
-      : payload.snapped_location || payload.raw_location;
-
-    if (!displayLocation) {
-      return res.status(404).json({ error: 'No telemetry found' });
-    }
-
-    return res.json({
-      latitude: displayLocation.latitude,
-      longitude: displayLocation.longitude,
-      speed: payload.speed,
-      heading: payload.heading,
-      accuracy: payload.accuracy,
-      timestamp: payload.last_seen_at,
-      is_online: payload.is_online,
-      last_seen_at: payload.last_seen_at,
-      raw_location: payload.raw_location,
-      snapped_location: payload.snapped_location,
-      distance_from_route_m: payload.distance_from_route_m,
-      is_off_route: payload.is_off_route,
-      next_stop: payload.next_stop,
-      distance_to_next_stop_m: payload.distance_to_next_stop_m,
-      eta_minutes: payload.eta_minutes,
-      delay_minutes: payload.delay_minutes,
-      delay_status: payload.delay_status,
-      current_route_distance_m: payload.current_route_distance_m,
-      remaining_distance_m: payload.remaining_distance_m,
-      full_route_geometry: payload.full_route_geometry,
-      passed_geometry: payload.passed_geometry,
-      next_stop_geometry: payload.next_stop_geometry,
-      remaining_geometry: payload.remaining_geometry,
-      recovery_geometry: payload.recovery_geometry,
-      stops: payload.stops,
-    });
-  } catch (error) {
-    return res.status(500).json({ error: error.message || 'Could not load last location' });
-  }
-});
-
-// POST /api/trips — driver starts a trip (links to a schedule)
-router.post('/trips', requireDriverAuth, async (req, res) => {
-  const { schedule_id } = req.body;
-  if (!schedule_id) return res.status(400).json({ error: 'schedule_id required' });
-
-  // Fetch the schedule to verify driver is assigned
-  const { data: schedule, error: schErr } = await supabaseAdmin
-    .from('schedules')
-    .select('id, driver_id, bus_id, route_id, schedule_type')
-    .eq('id', schedule_id)
-    .single();
-
-  if (schErr || !schedule) return res.status(404).json({ error: 'Schedule not found' });
-
-  // Verify driver is assigned to this schedule (skip check in dev mode)
-  if (req.driver.id !== 'dev-driver' && schedule.driver_id !== req.driver.id) {
-    return res.status(403).json({ error: 'You are not assigned to this schedule' });
-  }
-
-  try {
-    const conflicts = await findActiveTripConflicts({
-      driverId: schedule.driver_id,
-      busId: schedule.bus_id,
-    });
-
-    const sameScheduleTrip = conflicts.find(
-      (trip) => trip.schedule_id === schedule_id
-    );
-    if (sameScheduleTrip) {
-      return res.json(sameScheduleTrip);
-    }
-
-    const conflictPayload = buildTripConflictMessage(conflicts, {
-      driverId: schedule.driver_id,
-      busId: schedule.bus_id,
-    });
-    if (conflictPayload) {
-      return res.status(409).json(conflictPayload);
-    }
-  } catch (conflictErr) {
-    return res.status(500).json({ error: conflictErr.message || 'Could not validate active trips' });
-  }
-
-  // Create trip row
-  const { data: trip, error: tripErr } = await supabaseAdmin
-    .from('trips')
-    .insert({
-      schedule_id,
-      driver_id: schedule.driver_id,
-      bus_id: schedule.bus_id,
-      route_id: schedule.route_id,
-      schedule_type: schedule.schedule_type,
-      status: 'started',
-      started_at: new Date().toISOString(),
-    })
-    .select()
-    .single();
-
-  if (tripErr) {
-    // Unique partial indexes can still reject near-simultaneous requests.
-    if (tripErr.code === '23505') {
-      const conflicts = await findActiveTripConflicts({
-        driverId: schedule.driver_id,
-        busId: schedule.bus_id,
-      });
-      const conflictPayload = buildTripConflictMessage(conflicts, {
-        driverId: schedule.driver_id,
-        busId: schedule.bus_id,
-      });
-      if (conflictPayload) return res.status(409).json(conflictPayload);
     }
     return res.status(400).json({ error: tripErr.message });
   }
