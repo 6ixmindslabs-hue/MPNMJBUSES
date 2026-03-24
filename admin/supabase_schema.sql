@@ -102,6 +102,8 @@ ALTER TABLE public.stops ADD COLUMN IF NOT EXISTS schedule_type TEXT NOT NULL DE
 -- Add route_code and route_name to routes (if upgrading from old schema)
 ALTER TABLE public.routes ADD COLUMN IF NOT EXISTS route_name TEXT;
 ALTER TABLE public.routes ADD COLUMN IF NOT EXISTS route_code TEXT;
+ALTER TABLE public.routes ADD COLUMN IF NOT EXISTS geometry JSONB;
+ALTER TABLE public.routes ADD COLUMN IF NOT EXISTS polyline JSONB;
 
 -- ============================================================
 -- DISABLE RLS — allows the admin panel (anon key) to read/write freely
