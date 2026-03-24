@@ -33,7 +33,8 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
-      final response = await http.get(Uri.parse('${AppConfig.effectiveApiBase}/stops'));
+      final response =
+          await http.get(Uri.parse('${AppConfig.effectiveApiBase}/stops'));
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         setState(() {
@@ -59,14 +60,16 @@ class _SearchScreenState extends State<SearchScreen> {
   void _searchBuses() {
     if (_fromStopId == null || _toStopId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select both pickup and destination stops.')),
+        const SnackBar(
+            content: Text('Select both pickup and destination stops.')),
       );
       return;
     }
 
     if (_fromStopId == _toStopId) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pickup and destination cannot be the same stop.')),
+        const SnackBar(
+            content: Text('Pickup and destination cannot be the same stop.')),
       );
       return;
     }
@@ -94,7 +97,8 @@ class _SearchScreenState extends State<SearchScreen> {
           children: [
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.only(top: 80, left: 32, right: 32, bottom: 48),
+              padding: const EdgeInsets.only(
+                  top: 80, left: 32, right: 32, bottom: 48),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   colors: [Color(0xFFFACC15), Color(0xFFF59E0B)],
@@ -110,11 +114,13 @@ class _SearchScreenState extends State<SearchScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(LucideIcons.bus, color: Color(0xFF1E293B), size: 44),
+                      const Icon(LucideIcons.bus,
+                          color: Color(0xFF1E293B), size: 44),
                       const Spacer(),
                       IconButton(
                         onPressed: _loading ? null : _fetchStops,
-                        icon: const Icon(LucideIcons.refreshCw, color: Color(0xFF1E293B)),
+                        icon: const Icon(LucideIcons.refreshCw,
+                            color: Color(0xFF1E293B)),
                         tooltip: 'Refresh stops',
                       ),
                     ],
@@ -132,7 +138,10 @@ class _SearchScreenState extends State<SearchScreen> {
                   const SizedBox(height: 8),
                   const Text(
                     'Track your college bus live',
-                    style: TextStyle(color: Color(0xFF334155), fontSize: 16, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                        color: Color(0xFF334155),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
@@ -150,18 +159,21 @@ class _SearchScreenState extends State<SearchScreen> {
                               iconColor: Colors.blue,
                               label: 'SELECT PICKUP STOP',
                               value: _fromStopId,
-                              onChanged: (val) => setState(() => _fromStopId = val),
+                              onChanged: (val) =>
+                                  setState(() => _fromStopId = val),
                             ),
                             const Padding(
                               padding: EdgeInsets.symmetric(vertical: 4),
-                              child: Icon(LucideIcons.arrowDownUp, color: Color(0xFFCBD5E1), size: 18),
+                              child: Icon(LucideIcons.arrowDownUp,
+                                  color: Color(0xFFCBD5E1), size: 18),
                             ),
                             _buildSelectorCard(
                               icon: LucideIcons.mapPin,
                               iconColor: Colors.red,
                               label: 'SELECT DESTINATION',
                               value: _toStopId,
-                              onChanged: (val) => setState(() => _toStopId = val),
+                              onChanged: (val) =>
+                                  setState(() => _toStopId = val),
                             ),
                             const SizedBox(height: 16),
                             _buildShiftToggle(),
@@ -178,7 +190,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   elevation: 8,
-                                  shadowColor: const Color(0xFFF59E0B).withValues(alpha: 0.4),
+                                  shadowColor: const Color(0xFFF59E0B)
+                                      .withValues(alpha: 0.4),
                                 ),
                                 child: const Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -187,7 +200,10 @@ class _SearchScreenState extends State<SearchScreen> {
                                     SizedBox(width: 12),
                                     Text(
                                       'FIND AVAILABLE BUSES',
-                                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 0.5),
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 16,
+                                          letterSpacing: 0.5),
                                     ),
                                   ],
                                 ),
@@ -228,7 +244,8 @@ class _SearchScreenState extends State<SearchScreen> {
           Text(
             _loadError ?? 'Unable to load stops.',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF475569), fontWeight: FontWeight.w700),
+            style: const TextStyle(
+                color: Color(0xFF475569), fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -289,7 +306,8 @@ class _SearchScreenState extends State<SearchScreen> {
                 value: stop['id'],
                 child: Text(
                   stop['stop_name'],
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 16),
                 ),
               );
             }).toList(),
@@ -327,21 +345,30 @@ class _SearchScreenState extends State<SearchScreen> {
             borderRadius: BorderRadius.circular(12),
             boxShadow: active
                 ? [
-                    BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2))
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2))
                   ]
                 : null,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: active ? const Color(0xFFF59E0B) : const Color(0xFF64748B)),
+              Icon(icon,
+                  size: 16,
+                  color: active
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFF64748B)),
               const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: active ? const Color(0xFF1E293B) : const Color(0xFF64748B),
+                  color: active
+                      ? const Color(0xFF1E293B)
+                      : const Color(0xFF64748B),
                 ),
               ),
             ],

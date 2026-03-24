@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/constants.dart';
 
 class LiveTrackingScreen extends StatefulWidget {
@@ -34,11 +36,19 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   static const int _minAnimationDurationMs = 700;
   static const int _maxAnimationDurationMs = 2200;
   static const int _animationBufferMs = 250;
+  static const int _timelineDelayThresholdMinutes = 5;
+  static const double _fallbackTimelineEtaSpeedKmh = 18;
+  static const List<int> _alarmLeadMinuteOptions = [5, 10, 15];
+  static const String _alarmEnabledPrefKey = 'student_stop_alarm_enabled';
+  static const String _alarmLeadMinutesPrefKey =
+      'student_stop_alarm_lead_minutes';
 
   final MapController _mapController = MapController();
   final Distance _distance = const Distance();
+  final GlobalKey _timelineStackKey = GlobalKey();
 
   late final AnimationController _markerAnimationController;
+  late final AudioPlayer _alarmPlayer;
   Timer? _pollingTimer;
   bool _loadingStops = true;
   bool _loadingLocation = true;
@@ -75,6 +85,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   double _animationEndHeadingDeg = 0;
   double _animationStartRouteDistanceMeters = 0;
   double _animationEndRouteDistanceMeters = 0;
+  bool _timelineMeasurementScheduled = false;
+  bool _needsTimelineMeasurement = true;
+  List<GlobalKey> _timelineDotKeys = const [];
+  Map<int, Offset> _timelineDotCenters = const {};
+  bool _stopAlarmEnabled = false;
+  int _alarmLeadMinutes = 5;
+  bool _alarmTriggered = false;
+  bool _alarmPlaying = false;
 
   @override
   void initState() {
@@ -83,6 +101,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       vsync: this,
       duration: const Duration(milliseconds: AppConfig.refreshIntervalMs),
     )..addListener(_handleMarkerAnimationTick);
+    _alarmPlayer = AudioPlayer();
+    unawaited(_initializeAlarmPreferences());
     _fetchLiveRoute(includeFullGeometry: true);
     _startLiveTracking();
   }
@@ -91,6 +111,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   void dispose() {
     _pollingTimer?.cancel();
     _markerAnimationController.dispose();
+    unawaited(_alarmPlayer.dispose());
     super.dispose();
   }
 
@@ -104,15 +125,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   void _centerOnBus({double? zoom}) {
     if (!_mapReady) return;
     final targetZoom = zoom ?? _mapController.camera.zoom;
-    final centerDistance = _distanceMeters(_mapController.camera.center, _displayBusLocation);
+    final centerDistance = _distanceMeters(
+      _mapController.camera.center,
+      _displayBusLocation,
+    );
     final zoomDelta = (_mapController.camera.zoom - targetZoom).abs();
     if (centerDistance < 2 && zoomDelta < 0.01) return;
     _mapController.move(_displayBusLocation, targetZoom);
   }
 
   void _handleMapEvent(MapEvent event) {
-    final isUserDriven =
-        event.source != MapEventSource.mapController &&
+    final isUserDriven = event.source != MapEventSource.mapController &&
         event.source != MapEventSource.nonRotatedSizeChange &&
         event.source != MapEventSource.custom;
 
@@ -163,6 +186,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     if (_followBus) {
       _centerOnBus();
     }
+    _evaluateStopAlarm();
   }
 
   double _distanceMeters(LatLng a, LatLng b) {
@@ -204,8 +228,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final deltaLng = (to.longitude - from.longitude) * math.pi / 180;
 
     final y = math.sin(deltaLng) * math.cos(toLat);
-    final x =
-        math.cos(fromLat) * math.sin(toLat) -
+    final x = math.cos(fromLat) * math.sin(toLat) -
         math.sin(fromLat) * math.cos(toLat) * math.cos(deltaLng);
 
     return _normalizeAngle(math.atan2(y, x) * 180 / math.pi);
@@ -251,8 +274,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
       if (lengthSquared == 0) continue;
 
-      final t =
-          ((pointMeters.x * dx + pointMeters.y * dy) / lengthSquared).clamp(0.0, 1.0).toDouble();
+      final t = ((pointMeters.x * dx + pointMeters.y * dy) / lengthSquared)
+          .clamp(0.0, 1.0)
+          .toDouble();
       final snappedPoint = _projectFromMeters(start, (x: dx * t, y: dy * t));
       final distanceMeters = _distanceMeters(point, snappedPoint);
 
@@ -321,13 +345,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
 
     final gapMs = telemetryTimestamp != null && _lastTelemetryTimestamp != null
-        ? telemetryTimestamp.difference(_lastTelemetryTimestamp!).inMilliseconds.abs()
+        ? telemetryTimestamp
+            .difference(_lastTelemetryTimestamp!)
+            .inMilliseconds
+            .abs()
         : AppConfig.refreshIntervalMs;
     final gapSeconds = (gapMs.clamp(1000, 15000)) / 1000.0;
-    final speedMs = (math.max(speedKmh, _stationarySpeedThresholdKmh) * 1000) / 3600;
+    final speedMs =
+        (math.max(speedKmh, _stationarySpeedThresholdKmh) * 1000) / 3600;
     final plausibleDistance = math.max(120.0, speedMs * gapSeconds * 4.0);
 
-    return distanceMeters > math.max(_outlierJumpThresholdMeters, plausibleDistance + 120.0);
+    return distanceMeters >
+        math.max(_outlierJumpThresholdMeters, plausibleDistance + 120.0);
   }
 
   double _resolveTargetHeading({
@@ -343,7 +372,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
 
     final movementHeading = _bearingBetween(from, to);
-    final difference = _shortestAngleDelta(movementHeading, serverHeadingDeg).abs();
+    final difference =
+        _shortestAngleDelta(movementHeading, serverHeadingDeg).abs();
 
     if (difference > 100) {
       return movementHeading;
@@ -358,11 +388,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     DateTime? telemetryTimestamp,
   ) {
     final gapMs = telemetryTimestamp != null && _lastTelemetryTimestamp != null
-        ? telemetryTimestamp.difference(_lastTelemetryTimestamp!).inMilliseconds.abs()
+        ? telemetryTimestamp
+            .difference(_lastTelemetryTimestamp!)
+            .inMilliseconds
+            .abs()
         : AppConfig.refreshIntervalMs;
-    final baseDurationMs = ((gapMs.clamp(900, _maxAnimationDurationMs) - _animationBufferMs)
-            .clamp(_minAnimationDurationMs, _maxAnimationDurationMs))
-        .round();
+    final baseDurationMs =
+        ((gapMs.clamp(900, _maxAnimationDurationMs) - _animationBufferMs).clamp(
+      _minAnimationDurationMs,
+      _maxAnimationDurationMs,
+    )).round();
 
     if (distanceMeters <= _microJitterThresholdMeters) {
       return const Duration(milliseconds: _minAnimationDurationMs);
@@ -379,7 +414,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final durationMs = math.min(baseDurationMs, travelDurationMs);
 
     return Duration(
-      milliseconds: durationMs.clamp(_minAnimationDurationMs, _maxAnimationDurationMs),
+      milliseconds: durationMs.clamp(
+        _minAnimationDurationMs,
+        _maxAnimationDurationMs,
+      ),
     );
   }
 
@@ -507,14 +545,443 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     return fallback;
   }
 
-  int _resolveNextStopIndex(List<Map<String, dynamic>> stops, Map<String, dynamic> payload) {
+  Future<void> _initializeAlarmPreferences() async {
+    await _alarmPlayer.setReleaseMode(ReleaseMode.loop);
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedEnabled = prefs.getBool(_alarmEnabledPrefKey) ?? false;
+    final savedLeadMinutes = prefs.getInt(_alarmLeadMinutesPrefKey) ?? 5;
+    final resolvedLeadMinutes =
+        _alarmLeadMinuteOptions.contains(savedLeadMinutes)
+            ? savedLeadMinutes
+            : 5;
+
+    if (!mounted) return;
+    setState(() {
+      _stopAlarmEnabled = savedEnabled;
+      _alarmLeadMinutes = resolvedLeadMinutes;
+    });
+    _evaluateStopAlarm();
+  }
+
+  Future<void> _setAlarmEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_alarmEnabledPrefKey, enabled);
+
+    if (!mounted) return;
+    setState(() {
+      _stopAlarmEnabled = enabled;
+      _alarmTriggered = false;
+    });
+
+    if (!enabled) {
+      await _stopAlarmPlayback(resetTrigger: true);
+      return;
+    }
+
+    _evaluateStopAlarm();
+  }
+
+  Future<void> _setAlarmLeadMinutes(int minutes) async {
+    if (!_alarmLeadMinuteOptions.contains(minutes)) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_alarmLeadMinutesPrefKey, minutes);
+
+    if (!mounted) return;
+    setState(() {
+      _alarmLeadMinutes = minutes;
+      if (!_alarmPlaying) {
+        _alarmTriggered = false;
+      }
+    });
+    _evaluateStopAlarm();
+  }
+
+  Future<void> _startAlarmPlayback() async {
+    if (_alarmPlaying) return;
+
+    try {
+      await _alarmPlayer.stop();
+      await _alarmPlayer.play(AssetSource('audio/bus_alarm.wav'));
+      if (!mounted) return;
+      setState(() {
+        _alarmPlaying = true;
+        _alarmTriggered = true;
+      });
+    } catch (error) {
+      debugPrint('Error playing stop alarm: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not play the stop alarm.')),
+      );
+    }
+  }
+
+  Future<void> _stopAlarmPlayback({bool resetTrigger = false}) async {
+    try {
+      await _alarmPlayer.stop();
+    } catch (error) {
+      debugPrint('Error stopping stop alarm: $error');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _alarmPlaying = false;
+      if (resetTrigger) {
+        _alarmTriggered = false;
+      }
+    });
+  }
+
+  Map<String, dynamic>? _resolveAlarmTargetStop() {
+    if (_routeStops.isEmpty) return null;
+
+    final selectedStopId = widget.stopInfo['id']?.toString();
+    if (selectedStopId == null) return null;
+
+    try {
+      return _routeStops.firstWhere(
+        (stop) => stop['id']?.toString() == selectedStopId,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ({
+    Map<String, dynamic> stop,
+    double distanceAheadMeters,
+    bool isPassedStop,
+    int? etaMinutes,
+    DateTime? projectedArrival,
+    int delayMinutes,
+    String delayStatus,
+  })? _resolveAlarmTargetMeta() {
+    final stop = _resolveAlarmTargetStop();
+    if (stop == null) return null;
+
+    final stopRouteDistance = _parseDouble(stop['route_distance_m']);
+    final distanceAheadMeters = stopRouteDistance - _currentRouteDistanceMeters;
+    final isPassedStop = distanceAheadMeters < -_stopArrivalRadiusMeters;
+    final etaMeta = _resolveTimelineEtaMeta(
+      scheduledArrivalTime: stop['arrival_time']?.toString(),
+      distanceAheadMeters: math.max(0, distanceAheadMeters),
+      isPassedStop: isPassedStop,
+    );
+
+    return (
+      stop: stop,
+      distanceAheadMeters: distanceAheadMeters,
+      isPassedStop: isPassedStop,
+      etaMinutes: etaMeta.etaMinutes,
+      projectedArrival: etaMeta.projectedArrival,
+      delayMinutes: etaMeta.delayMinutes,
+      delayStatus: etaMeta.delayStatus,
+    );
+  }
+
+  void _evaluateStopAlarm() {
+    final targetMeta = _resolveAlarmTargetMeta();
+    if (!_stopAlarmEnabled || targetMeta == null) {
+      if (_alarmPlaying) {
+        unawaited(_stopAlarmPlayback(resetTrigger: !_stopAlarmEnabled));
+      }
+      return;
+    }
+
+    if (targetMeta.isPassedStop) {
+      if (_alarmPlaying) {
+        unawaited(_stopAlarmPlayback());
+      }
+      return;
+    }
+
+    final etaMinutes = targetMeta.etaMinutes;
+    if (etaMinutes == null) return;
+
+    if (_alarmTriggered || _alarmPlaying) return;
+
+    if (etaMinutes <= _alarmLeadMinutes) {
+      unawaited(_startAlarmPlayback());
+    }
+  }
+
+  DateTime? _parseScheduledArrivalTime(String? rawArrival) {
+    if (rawArrival == null || rawArrival.isEmpty) return null;
+
+    final parts = rawArrival.split(':');
+    if (parts.length < 2) return null;
+
+    final hours = int.tryParse(parts[0]);
+    final minutes = int.tryParse(parts[1]);
+    final seconds = parts.length >= 3 ? int.tryParse(parts[2]) ?? 0 : 0;
+    if (hours == null || minutes == null) return null;
+
+    final now = DateTime.now();
+    return DateTime(
+      now.year,
+      now.month,
+      now.day,
+      hours,
+      minutes,
+      seconds,
+    );
+  }
+
+  int? _calculateTimelineEtaMinutes(double distanceAheadMeters) {
+    if (distanceAheadMeters <= _stopArrivalRadiusMeters) {
+      return 0;
+    }
+
+    if (_liveSnapshot == null || _liveSnapshot?['last_seen_at'] == null) {
+      return null;
+    }
+
+    final nextStopDistance = _distanceToNextStopMeters;
+    if (_etaMinutes != null && nextStopDistance > _stopArrivalRadiusMeters) {
+      final minutesPerMeter = _etaMinutes! / nextStopDistance;
+      if (minutesPerMeter.isFinite && minutesPerMeter > 0) {
+        return math.max(1, (distanceAheadMeters * minutesPerMeter).ceil());
+      }
+    }
+
+    final liveSpeedKmh = _parseDouble(_liveSnapshot?['speed']);
+    final resolvedSpeedKmh = liveSpeedKmh > 0
+        ? math.max(liveSpeedKmh, _fallbackTimelineEtaSpeedKmh)
+        : _fallbackTimelineEtaSpeedKmh;
+    final speedMs = (resolvedSpeedKmh * 1000) / 3600;
+    if (speedMs <= 0) return null;
+
+    return math.max(1, (distanceAheadMeters / speedMs / 60).ceil());
+  }
+
+  ({
+    int? etaMinutes,
+    DateTime? projectedArrival,
+    int delayMinutes,
+    String delayStatus,
+  }) _resolveTimelineEtaMeta({
+    required String? scheduledArrivalTime,
+    required double distanceAheadMeters,
+    required bool isPassedStop,
+  }) {
+    if (isPassedStop) {
+      return (
+        etaMinutes: null,
+        projectedArrival: null,
+        delayMinutes: 0,
+        delayStatus: 'Passed',
+      );
+    }
+
+    final etaMinutes = _calculateTimelineEtaMinutes(distanceAheadMeters);
+    final projectedArrival = etaMinutes == null
+        ? null
+        : DateTime.now().add(Duration(minutes: etaMinutes));
+    final scheduledArrival = _parseScheduledArrivalTime(scheduledArrivalTime);
+
+    if (projectedArrival == null) {
+      return (
+        etaMinutes: null,
+        projectedArrival: null,
+        delayMinutes: 0,
+        delayStatus: 'ETA updating',
+      );
+    }
+
+    if (scheduledArrival == null) {
+      return (
+        etaMinutes: etaMinutes,
+        projectedArrival: projectedArrival,
+        delayMinutes: 0,
+        delayStatus: 'On Time',
+      );
+    }
+
+    final delayMinutes = math.max(
+      0,
+      projectedArrival.difference(scheduledArrival).inMinutes.round(),
+    );
+    final delayStatus =
+        delayMinutes > _timelineDelayThresholdMinutes ? 'Delayed' : 'On Time';
+
+    return (
+      etaMinutes: etaMinutes,
+      projectedArrival: projectedArrival,
+      delayMinutes: delayMinutes,
+      delayStatus: delayStatus,
+    );
+  }
+
+  Color _resolveTimelineStatusColor(String delayStatus) {
+    switch (delayStatus) {
+      case 'Delayed':
+        return const Color(0xFFDC2626);
+      case 'ETA updating':
+        return const Color(0xFF64748B);
+      case 'Passed':
+        return const Color(0xFF94A3B8);
+      default:
+        return const Color(0xFF2563EB);
+    }
+  }
+
+  void _syncTimelineDotKeys() {
+    if (_timelineDotKeys.length == _routeStops.length) return;
+
+    _timelineDotKeys = List<GlobalKey>.generate(
+      _routeStops.length,
+      (_) => GlobalKey(),
+    );
+    _timelineDotCenters = const {};
+    _needsTimelineMeasurement = true;
+  }
+
+  void _scheduleTimelineMeasurement() {
+    if (_timelineMeasurementScheduled ||
+        !_needsTimelineMeasurement ||
+        _routeStops.isEmpty) {
+      return;
+    }
+
+    _timelineMeasurementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _timelineMeasurementScheduled = false;
+      if (!mounted) return;
+      _measureTimelineDots();
+    });
+  }
+
+  bool _hasMeaningfulTimelineCenterChange(Map<int, Offset> nextCenters) {
+    if (_timelineDotCenters.length != nextCenters.length) return true;
+
+    for (final entry in nextCenters.entries) {
+      final previous = _timelineDotCenters[entry.key];
+      if (previous == null) return true;
+
+      if ((previous.dx - entry.value.dx).abs() > 0.5 ||
+          (previous.dy - entry.value.dy).abs() > 0.5) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void _measureTimelineDots() {
+    final stackContext = _timelineStackKey.currentContext;
+    final stackRenderBox = stackContext?.findRenderObject() as RenderBox?;
+    if (stackRenderBox == null || !stackRenderBox.hasSize) {
+      _needsTimelineMeasurement = true;
+      return;
+    }
+
+    final nextCenters = <int, Offset>{};
+
+    for (var index = 0; index < _timelineDotKeys.length; index += 1) {
+      final dotContext = _timelineDotKeys[index].currentContext;
+      final dotRenderBox = dotContext?.findRenderObject() as RenderBox?;
+      if (dotRenderBox == null || !dotRenderBox.hasSize) {
+        _needsTimelineMeasurement = true;
+        return;
+      }
+
+      nextCenters[index] = dotRenderBox.localToGlobal(
+        dotRenderBox.size.center(Offset.zero),
+        ancestor: stackRenderBox,
+      );
+    }
+
+    _needsTimelineMeasurement = false;
+
+    if (!_hasMeaningfulTimelineCenterChange(nextCenters)) {
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _timelineDotCenters = nextCenters;
+    });
+  }
+
+  Offset? _resolveTimelineBusOffset() {
+    if (_routeStops.isEmpty ||
+        _timelineDotCenters.length != _routeStops.length) {
+      return null;
+    }
+
+    final progressDistance = _currentRouteDistanceMeters.toDouble();
+    final stopDistances = _routeStops
+        .map((stop) => _parseDouble(stop['route_distance_m']))
+        .toList(growable: false);
+
+    if (stopDistances.isEmpty) return null;
+
+    var nearestStopIndex = 0;
+    var nearestStopDelta = double.infinity;
+    for (var index = 0; index < stopDistances.length; index += 1) {
+      final delta = (stopDistances[index] - progressDistance).abs();
+      if (delta < nearestStopDelta) {
+        nearestStopDelta = delta;
+        nearestStopIndex = index;
+      }
+    }
+
+    if (nearestStopDelta <= _stopArrivalRadiusMeters) {
+      return _timelineDotCenters[nearestStopIndex];
+    }
+
+    if (progressDistance <= stopDistances.first) {
+      return _timelineDotCenters[0];
+    }
+
+    if (progressDistance >= stopDistances.last) {
+      return _timelineDotCenters[stopDistances.length - 1];
+    }
+
+    for (var index = 0; index < stopDistances.length - 1; index += 1) {
+      final startDistance = stopDistances[index];
+      final endDistance = stopDistances[index + 1];
+
+      if (progressDistance > endDistance) continue;
+
+      final startCenter = _timelineDotCenters[index];
+      final endCenter = _timelineDotCenters[index + 1];
+      if (startCenter == null || endCenter == null) {
+        return null;
+      }
+
+      final span = endDistance - startDistance;
+      if (span.abs() < 0.001) {
+        return endCenter;
+      }
+
+      final t = ((progressDistance - startDistance) / span)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      return Offset(
+        _lerpDouble(startCenter.dx, endCenter.dx, t),
+        _lerpDouble(startCenter.dy, endCenter.dy, t),
+      );
+    }
+
+    return _timelineDotCenters[stopDistances.length - 1];
+  }
+
+  int _resolveNextStopIndex(
+    List<Map<String, dynamic>> stops,
+    Map<String, dynamic> payload,
+  ) {
     if (stops.isEmpty) return 0;
 
     final nextStop = payload['next_stop'];
     if (nextStop is Map) {
       final nextStopId = nextStop['id']?.toString();
       if (nextStopId != null) {
-        final matchIndex = stops.indexWhere((stop) => stop['id']?.toString() == nextStopId);
+        final matchIndex = stops.indexWhere(
+          (stop) => stop['id']?.toString() == nextStopId,
+        );
         if (matchIndex >= 0) return matchIndex;
       }
 
@@ -556,7 +1023,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     int nextStopIndex,
     Map<String, dynamic> payload,
   ) {
-    if (stops.isNotEmpty && nextStopIndex >= 0 && nextStopIndex < stops.length) {
+    if (stops.isNotEmpty &&
+        nextStopIndex >= 0 &&
+        nextStopIndex < stops.length) {
       final stop = stops[nextStopIndex];
       return LatLng(
         _parseDouble(stop['latitude']),
@@ -611,12 +1080,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final cumulative = <double>[0];
     for (var index = 1; index < routePoints.length; index += 1) {
       cumulative.add(
-        cumulative.last + _distanceMeters(routePoints[index - 1], routePoints[index]),
+        cumulative.last +
+            _distanceMeters(routePoints[index - 1], routePoints[index]),
       );
     }
 
     final totalDistance = cumulative.last;
-    final startDistance = startDistanceMeters.clamp(0.0, totalDistance).toDouble();
+    final startDistance =
+        startDistanceMeters.clamp(0.0, totalDistance).toDouble();
     final endDistance = endDistanceMeters.isFinite
         ? endDistanceMeters.clamp(startDistance, totalDistance).toDouble()
         : totalDistance;
@@ -642,14 +1113,21 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         if (startDistance <= segmentStartDistance) {
           _appendUniquePoint(sliced, start);
         } else {
-          final fraction = (startDistance - segmentStartDistance) / segmentLength;
-          _appendUniquePoint(sliced, _interpolateRoutePoint(start, end, fraction));
+          final fraction =
+              (startDistance - segmentStartDistance) / segmentLength;
+          _appendUniquePoint(
+            sliced,
+            _interpolateRoutePoint(start, end, fraction),
+          );
         }
       }
 
       if (endDistance <= segmentEndDistance) {
         final fraction = (endDistance - segmentStartDistance) / segmentLength;
-        _appendUniquePoint(sliced, _interpolateRoutePoint(start, end, fraction));
+        _appendUniquePoint(
+          sliced,
+          _interpolateRoutePoint(start, end, fraction),
+        );
         break;
       }
 
@@ -660,7 +1138,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   }
 
   double? _resolveNextStopRouteDistanceMeters() {
-    if (_routeStops.isEmpty || _nextStopIndex < 0 || _nextStopIndex >= _routeStops.length) {
+    if (_routeStops.isEmpty ||
+        _nextStopIndex < 0 ||
+        _nextStopIndex >= _routeStops.length) {
       return null;
     }
 
@@ -686,7 +1166,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
 
     final contextSegments = <List<LatLng>>[
-      _sliceGeometryByDistance(_fullRouteGeometry, 0, _currentRouteDistanceMeters.toDouble()),
+      _sliceGeometryByDistance(
+        _fullRouteGeometry,
+        0,
+        _currentRouteDistanceMeters.toDouble(),
+      ),
     ].where((segment) => segment.length >= 2).toList();
 
     if (contextSegments.isEmpty) {
@@ -732,8 +1216,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   Future<void> _fetchLiveRoute({bool includeFullGeometry = false}) async {
     final tripId = widget.trip['id'];
-    final shouldIncludeFullGeometry = includeFullGeometry || !_hasLoadedFullGeometry;
-    final uri = Uri.parse('${AppConfig.effectiveApiBase}/trips/$tripId/live-route').replace(
+    final shouldIncludeFullGeometry =
+        includeFullGeometry || !_hasLoadedFullGeometry;
+    final uri = Uri.parse(
+      '${AppConfig.effectiveApiBase}/trips/$tripId/live-route',
+    ).replace(
       queryParameters: {
         if (shouldIncludeFullGeometry) 'include_full_geometry': 'true',
         'include_recovery_geometry': 'false',
@@ -758,27 +1245,41 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       final isOffRoute = payload['is_off_route'] == true;
       final routeStops = _parseStops(payload['stops']);
       final fullRouteGeometry = _parseGeometry(payload['full_route_geometry']);
-      final routeGeometryForDisplay = fullRouteGeometry.isNotEmpty ? fullRouteGeometry : _fullRouteGeometry;
+      final routeGeometryForDisplay =
+          fullRouteGeometry.isNotEmpty ? fullRouteGeometry : _fullRouteGeometry;
       final nextStopIndex = _resolveNextStopIndex(routeStops, payload);
-      final nextStopLocation = _resolveNextStopLocation(routeStops, nextStopIndex, payload);
-      final nextStopGeometry = _parseGeometry(payload['next_stop_geometry']);
-      final distanceFromRouteMeters = _parseDouble(payload['distance_from_route_m']);
+      final nextStopLocation = _resolveNextStopLocation(
+        routeStops,
+        nextStopIndex,
+        payload,
+      );
+      final distanceFromRouteMeters = _parseDouble(
+        payload['distance_from_route_m'],
+      );
       final speedKmh = _parseDouble(payload['speed']);
-      final serverHeadingDeg = _normalizeAngle(_parseDouble(payload['heading']));
-      final routeDistanceMeters = _parseDouble(payload['current_route_distance_m']);
+      final serverHeadingDeg = _normalizeAngle(
+        _parseDouble(payload['heading']),
+      );
+      final routeDistanceMeters = _parseDouble(
+        payload['current_route_distance_m'],
+      );
       final telemetryTimestamp = payload['last_seen_at'] is String
           ? DateTime.tryParse(payload['last_seen_at'])?.toLocal()
           : null;
-      final baseLocation =
-          (isOffRoute ? rawLocation ?? snappedLocation : snappedLocation ?? rawLocation) ??
-              _displayBusLocation;
+      final baseLocation = (isOffRoute
+              ? rawLocation ?? snappedLocation
+              : snappedLocation ?? rawLocation) ??
+          _displayBusLocation;
       final routeAlignedLocation = _resolveMarkerTargetLocation(
         baseLocation: baseLocation,
         routeGeometry: routeGeometryForDisplay,
         isOffRoute: isOffRoute,
         distanceFromRouteMeters: distanceFromRouteMeters,
       );
-      final smoothedLocation = _smoothMarkerTarget(routeAlignedLocation, speedKmh);
+      final smoothedLocation = _smoothMarkerTarget(
+        routeAlignedLocation,
+        speedKmh,
+      );
       final referenceLocation = _targetBusLocation ?? _displayBusLocation;
       final targetHeadingDeg = _resolveTargetHeading(
         from: referenceLocation,
@@ -796,8 +1297,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       if (!mounted) return;
       setState(() {
         _routeStops = routeStops;
+        _syncTimelineDotKeys();
+        _needsTimelineMeasurement = true;
         _activeNextStopLocation = nextStopLocation;
-        _activeRouteTailGeometry = _sliceGeometryByDistance(routeGeometryForDisplay, routeDistanceMeters);
+        _activeRouteTailGeometry = _sliceGeometryByDistance(
+          routeGeometryForDisplay,
+          routeDistanceMeters,
+        );
         _activeRouteGeometry = _buildActiveRouteSegment(
           busLocation: _displayBusLocation,
           routeSegment: _activeRouteTailGeometry,
@@ -809,10 +1315,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         }
         _liveSnapshot = payload;
         _nextStopIndex = nextStopIndex;
-        _distanceToNextStopMeters = _parseDouble(payload['distance_to_next_stop_m']);
-        _remainingRouteDistanceMeters = _parseDouble(payload['remaining_distance_m']);
+        _distanceToNextStopMeters = _parseDouble(
+          payload['distance_to_next_stop_m'],
+        );
+        _remainingRouteDistanceMeters = _parseDouble(
+          payload['remaining_distance_m'],
+        );
         _distanceToRouteMeters = distanceFromRouteMeters;
-        _etaMinutes = payload['eta_minutes'] == null ? null : _parseInt(payload['eta_minutes']);
+        _etaMinutes = payload['eta_minutes'] == null
+            ? null
+            : _parseInt(payload['eta_minutes']);
         _delayMinutes = _parseInt(payload['delay_minutes']);
         _delayStatus = (payload['delay_status'] ?? 'On Time').toString();
         _lastUpdatedAt = telemetryTimestamp;
@@ -824,6 +1336,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 : 'Bus is offline. Showing the last known route position.')
             : null;
       });
+      _scheduleTimelineMeasurement();
+      _evaluateStopAlarm();
 
       _animateMarkerTo(
         location: smoothedLocation,
@@ -847,7 +1361,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   @override
   Widget build(BuildContext context) {
-    final schedules = Map<String, dynamic>.from(widget.trip['schedules'] ?? const {});
+    final schedules = Map<String, dynamic>.from(
+      widget.trip['schedules'] ?? const {},
+    );
     final bus = Map<String, dynamic>.from(schedules['buses'] ?? const {});
 
     return Scaffold(
@@ -909,7 +1425,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   ),
                   const SizedBox(height: 10),
                   _mapControlButton(
-                    icon: _followBus ? LucideIcons.locateFixed : LucideIcons.locate,
+                    icon: _followBus
+                        ? LucideIcons.locateFixed
+                        : LucideIcons.locate,
                     tooltip: _followBus ? 'Following bus' : 'Follow bus',
                     active: _followBus,
                     onTap: () {
@@ -930,7 +1448,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               maxChildSize: 0.86,
               snap: true,
               snapSizes: const [0.24, 0.42, 0.68, 0.86],
-              builder: (context, scrollController) => _buildDetailsSheet(scrollController),
+              builder: (context, scrollController) =>
+                  _buildDetailsSheet(scrollController),
             ),
           ),
         ],
@@ -966,9 +1485,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           userAgentPackageName: 'in.edu.mpnmjec.student',
         ),
         if (contextRoutePolylines.isNotEmpty)
-          PolylineLayer(
-            polylines: contextRoutePolylines,
-          ),
+          PolylineLayer(polylines: contextRoutePolylines),
         if (_activeRouteGeometry.length >= 2)
           PolylineLayer(
             polylines: [
@@ -990,16 +1507,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               child: _buildBusMarker(),
             ),
             ..._routeStops.asMap().entries.map(
-              (entry) => Marker(
-                point: LatLng(
-                  _parseDouble(entry.value['latitude']),
-                  _parseDouble(entry.value['longitude']),
+                  (entry) => Marker(
+                    point: LatLng(
+                      _parseDouble(entry.value['latitude']),
+                      _parseDouble(entry.value['longitude']),
+                    ),
+                    width: 120,
+                    height: 72,
+                    child: _buildStopMarker(entry.value, entry.key),
+                  ),
                 ),
-                width: 120,
-                height: 72,
-                child: _buildStopMarker(entry.value, entry.key),
-              ),
-            ),
           ],
         ),
       ],
@@ -1031,7 +1548,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         thickness: 4,
         child: CustomScrollView(
           controller: scrollController,
-          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
           slivers: [
             const SliverToBoxAdapter(child: SizedBox(height: 12)),
             SliverToBoxAdapter(child: Center(child: _buildSheetHandle())),
@@ -1076,24 +1595,77 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 ),
               )
             else
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(24, 0, 24, math.max(bottomInset + 24, 32)),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final stop = _routeStops[index];
-                      return _buildTimelineItem(
-                        stop,
-                        index,
-                        index == 0,
-                        index == _routeStops.length - 1,
-                      );
-                    },
-                    childCount: _routeStops.length,
-                  ),
-                ),
-              ),
+              SliverToBoxAdapter(child: _buildTimelineSection(bottomInset)),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineSection(double bottomInset) {
+    _syncTimelineDotKeys();
+    _scheduleTimelineMeasurement();
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, 0, 24, math.max(bottomInset + 24, 32)),
+      child: Stack(
+        key: _timelineStackKey,
+        clipBehavior: Clip.none,
+        children: [
+          Column(
+            children: List<Widget>.generate(_routeStops.length, (index) {
+              final stop = _routeStops[index];
+              return _buildTimelineItem(
+                stop,
+                index,
+                index == 0,
+                index == _routeStops.length - 1,
+                dotKey: _timelineDotKeys[index],
+              );
+            }),
+          ),
+          _buildTimelineBusOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimelineBusOverlay() {
+    final busOffset = _resolveTimelineBusOffset();
+    if (busOffset == null) {
+      return const SizedBox.shrink();
+    }
+
+    const overlaySize = 34.0;
+
+    return Positioned(
+      left: busOffset.dx - (overlaySize / 2),
+      top: busOffset.dy - (overlaySize / 2),
+      child: IgnorePointer(
+        child: Container(
+          width: overlaySize,
+          height: overlaySize,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFACC15), Color(0xFFF59E0B), Color(0xFFEA580C)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2.5),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.34),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: const Icon(
+            LucideIcons.bus,
+            size: 16,
+            color: Color(0xFF1E293B),
+          ),
         ),
       ),
     );
@@ -1113,19 +1685,19 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   Widget _buildLiveOverlay() {
     final speed = _parseDouble(_liveSnapshot?['speed']);
     final heading = _displayHeadingDeg;
-    final nextStop = _routeStops.isNotEmpty && _nextStopIndex < _routeStops.length
-        ? _routeStops[_nextStopIndex]
-        : (_liveSnapshot?['next_stop'] is Map
-            ? Map<String, dynamic>.from(_liveSnapshot!['next_stop'])
-            : null);
+    final nextStop =
+        _routeStops.isNotEmpty && _nextStopIndex < _routeStops.length
+            ? _routeStops[_nextStopIndex]
+            : (_liveSnapshot?['next_stop'] is Map
+                ? Map<String, dynamic>.from(_liveSnapshot!['next_stop'])
+                : null);
     final etaText = _etaMinutes == null
         ? 'ETA updating'
         : _etaMinutes == 0
             ? 'Arriving'
             : 'ETA $_etaMinutes min';
-    final delayText = _delayStatus == 'Delayed'
-        ? 'Delayed by $_delayMinutes min'
-        : 'On time';
+    final delayText =
+        _delayStatus == 'Delayed' ? 'Delayed by $_delayMinutes min' : 'On time';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1215,9 +1787,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 color: const Color(0xFFF59E0B),
               ),
               _buildInfoPill(
-                icon: _delayStatus == 'Delayed' ? LucideIcons.timerOff : LucideIcons.badgeCheck,
+                icon: _delayStatus == 'Delayed'
+                    ? LucideIcons.timerOff
+                    : LucideIcons.badgeCheck,
                 label: delayText,
-                color: _delayStatus == 'Delayed' ? const Color(0xFFDC2626) : const Color(0xFF2563EB),
+                color: _delayStatus == 'Delayed'
+                    ? const Color(0xFFDC2626)
+                    : const Color(0xFF2563EB),
               ),
               _buildInfoPill(
                 icon: LucideIcons.navigation,
@@ -1226,6 +1802,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          _buildStopAlarmPanel(),
           const SizedBox(height: 6),
           if (_loadingLocation)
             const Text(
@@ -1254,6 +1832,157 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 fontWeight: FontWeight.w600,
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStopAlarmPanel() {
+    final targetMeta = _resolveAlarmTargetMeta();
+    final stopName = (widget.stopInfo['stop_name'] ?? 'your stop').toString();
+    final statusColor = _alarmPlaying
+        ? const Color(0xFFDC2626)
+        : _stopAlarmEnabled
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFF94A3B8);
+
+    String statusText;
+    if (targetMeta == null) {
+      statusText = 'This selected stop is not available on the current trip.';
+    } else if (targetMeta.isPassedStop) {
+      statusText = 'The bus has already passed $stopName.';
+    } else if (_alarmPlaying) {
+      statusText = 'Alarm ringing now for $stopName.';
+    } else if (!_stopAlarmEnabled) {
+      statusText = 'Enable an alarm for $stopName before the bus reaches it.';
+    } else if (targetMeta.etaMinutes == null) {
+      statusText = 'Waiting for a stable live ETA to $stopName.';
+    } else {
+      statusText =
+          'Alarm will ring $_alarmLeadMinutes min before $stopName. Current ETA ${targetMeta.etaMinutes} min.';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color:
+              _alarmPlaying ? const Color(0xFFFCA5A5) : const Color(0xFFFDE68A),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _alarmPlaying ? LucideIcons.bellRing : LucideIcons.alarmClock,
+                  size: 16,
+                  color: statusColor,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'STOP ALARM',
+                      style: TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    Text(
+                      stopName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF1E293B),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                value: _stopAlarmEnabled,
+                onChanged: targetMeta == null ? null : _setAlarmEnabled,
+                activeColor: const Color(0xFFF59E0B),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            statusText,
+            style: const TextStyle(
+              color: Color(0xFF475569),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _alarmLeadMinuteOptions.map((minutes) {
+              return ChoiceChip(
+                label: Text('$minutes min'),
+                selected: _alarmLeadMinutes == minutes,
+                onSelected: targetMeta == null
+                    ? null
+                    : (selected) {
+                        if (selected) {
+                          _setAlarmLeadMinutes(minutes);
+                        }
+                      },
+                labelStyle: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: _alarmLeadMinutes == minutes
+                      ? const Color(0xFF1E293B)
+                      : const Color(0xFF475569),
+                ),
+                selectedColor: const Color(0xFFFCD34D),
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                  side: BorderSide(
+                    color: _alarmLeadMinutes == minutes
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFFE2E8F0),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          if (_alarmPlaying) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _stopAlarmPlayback(),
+                icon: const Icon(LucideIcons.bellOff, size: 16),
+                label: const Text('STOP ALARM'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1288,6 +2017,35 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
   }
 
+  Widget _buildTimelineInfoPill({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBusMarker() {
     final heading = _displayHeadingDeg * (math.pi / 180);
 
@@ -1309,7 +2067,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             height: 46,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFFFACC15), Color(0xFFF59E0B), Color(0xFFEA580C)],
+                colors: [
+                  Color(0xFFFACC15),
+                  Color(0xFFF59E0B),
+                  Color(0xFFEA580C),
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -1359,7 +2121,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 ],
               ),
               child: Text(
-                _liveSnapshot?['is_off_route'] == true ? 'OFF ROUTE' : 'LIVE BUS',
+                _liveSnapshot?['is_off_route'] == true
+                    ? 'OFF ROUTE'
+                    : 'LIVE BUS',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 9,
@@ -1376,10 +2140,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   Widget _buildStopMarker(Map<String, dynamic> stop, int index) {
     final stopRouteDistance = _parseDouble(stop['route_distance_m']);
-    final distanceFromBusOnRoute = stopRouteDistance - _currentRouteDistanceMeters;
+    final distanceFromBusOnRoute =
+        stopRouteDistance - _currentRouteDistanceMeters;
     final isPassedStop = distanceFromBusOnRoute < -_stopArrivalRadiusMeters;
     final isNextStop = index == _nextStopIndex;
-    final isSelectedStop = stop['id']?.toString() == widget.stopInfo['id']?.toString();
+    final isSelectedStop =
+        stop['id']?.toString() == widget.stopInfo['id']?.toString();
 
     final chipColor = isNextStop
         ? const Color(0xFFF59E0B)
@@ -1388,8 +2154,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             : isPassedStop
                 ? const Color(0xFFCBD5E1)
                 : const Color(0xFF1E293B);
-    final markerSize = isNextStop ? 34.0 : isSelectedStop ? 28.0 : 20.0;
-    final markerOpacity = isNextStop ? 1.0 : isSelectedStop ? 0.95 : isPassedStop ? 0.45 : 0.65;
+    final markerSize = isNextStop
+        ? 34.0
+        : isSelectedStop
+            ? 28.0
+            : 20.0;
+    final markerOpacity = isNextStop
+        ? 1.0
+        : isSelectedStop
+            ? 0.95
+            : isPassedStop
+                ? 0.45
+                : 0.65;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1410,7 +2186,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ],
             ),
             child: Text(
-              isNextStop ? 'NEXT: ${stop['stop_name']}' : stop['stop_name']?.toString() ?? 'Stop',
+              isNextStop
+                  ? 'NEXT: ${stop['stop_name']}'
+                  : stop['stop_name']?.toString() ?? 'Stop',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -1420,10 +2198,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ),
             ),
           ),
-          Container(
-            width: markerSize,
-            height: markerSize,
-            decoration: BoxDecoration(
+        Container(
+          width: markerSize,
+          height: markerSize,
+          decoration: BoxDecoration(
             color: chipColor.withValues(alpha: markerOpacity),
             shape: BoxShape.circle,
             border: Border.all(
@@ -1487,17 +2265,41 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     Map<String, dynamic> stop,
     int index,
     bool isFirst,
-    bool isLast,
-  ) {
+    bool isLast, {
+    required GlobalKey dotKey,
+  }) {
     final stopRouteDistance = _parseDouble(stop['route_distance_m']);
     final distanceAheadMeters = stopRouteDistance - _currentRouteDistanceMeters;
     final isPassedStop = distanceAheadMeters < -_stopArrivalRadiusMeters;
     final isNextStop = index == _nextStopIndex;
-    final isSelectedStop = stop['id']?.toString() == widget.stopInfo['id']?.toString();
+    final isSelectedStop =
+        stop['id']?.toString() == widget.stopInfo['id']?.toString();
     final isArrivingNear = isNextStop && _distanceToNextStopMeters <= 200;
 
     final rawArrival = stop['arrival_time']?.toString() ?? '--:--';
-    final shortArrival = rawArrival.length >= 5 ? rawArrival.substring(0, 5) : rawArrival;
+    final shortArrival =
+        rawArrival.length >= 5 ? rawArrival.substring(0, 5) : rawArrival;
+    final etaMeta = _resolveTimelineEtaMeta(
+      scheduledArrivalTime: stop['arrival_time']?.toString(),
+      distanceAheadMeters: isNextStop
+          ? _distanceToNextStopMeters
+          : math.max(0, distanceAheadMeters),
+      isPassedStop: isPassedStop,
+    );
+    final projectedArrivalLabel = etaMeta.projectedArrival == null
+        ? null
+        : DateFormat('hh:mm a').format(etaMeta.projectedArrival!);
+    final etaLabel = etaMeta.etaMinutes == null
+        ? 'ETA updating'
+        : etaMeta.etaMinutes == 0
+            ? 'ETA now'
+            : 'ETA ${etaMeta.etaMinutes} min';
+    final timelineStatusColor = _resolveTimelineStatusColor(
+      etaMeta.delayStatus,
+    );
+    final timelineStatusLabel = etaMeta.delayStatus == 'Delayed'
+        ? 'Delayed ${etaMeta.delayMinutes} min'
+        : etaMeta.delayStatus;
 
     String distanceLabel;
     if (isPassedStop) {
@@ -1534,7 +2336,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 shortArrival,
                 style: TextStyle(
                   fontWeight: FontWeight.w900,
-                  color: isPassedStop ? const Color(0xFF94A3B8) : const Color(0xFF1E293B),
+                  color: isPassedStop
+                      ? const Color(0xFF94A3B8)
+                      : const Color(0xFF1E293B),
                   fontSize: 14,
                 ),
               ),
@@ -1559,6 +2363,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 color: isFirst ? Colors.transparent : const Color(0xFFE2E8F0),
               ),
               Container(
+                key: dotKey,
                 width: 16,
                 height: 16,
                 decoration: BoxDecoration(
@@ -1567,7 +2372,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   border: Border.all(color: borderColor, width: 3),
                 ),
                 child: isArrivingNear
-                    ? const Icon(LucideIcons.zap, color: Colors.white, size: 8)
+                    ? const Icon(
+                        LucideIcons.zap,
+                        color: Colors.white,
+                        size: 8,
+                      )
                     : null,
               ),
               Container(
@@ -1618,12 +2427,51 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   ),
                 ],
               ),
+              if (!isPassedStop) ...[
+                const SizedBox(height: 8),
+                Text(
+                  projectedArrivalLabel == null
+                      ? 'Expected arrival updating'
+                      : 'Expected $projectedArrivalLabel',
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildTimelineInfoPill(
+                      icon: LucideIcons.clock3,
+                      label: etaLabel,
+                      color: const Color(0xFFF59E0B),
+                    ),
+                    _buildTimelineInfoPill(
+                      icon: etaMeta.delayStatus == 'Delayed'
+                          ? LucideIcons.timerOff
+                          : etaMeta.delayStatus == 'ETA updating'
+                              ? LucideIcons.clock3
+                              : LucideIcons.badgeCheck,
+                      label: timelineStatusLabel,
+                      color: timelineStatusColor,
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 12),
               if (isArrivingNear || isSelectedStop)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: (isSelectedStop ? const Color(0xFF2563EB) : const Color(0xFFF59E0B))
+                    color: (isSelectedStop
+                            ? const Color(0xFF2563EB)
+                            : const Color(0xFFF59E0B))
                         .withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),

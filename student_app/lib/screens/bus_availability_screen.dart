@@ -39,7 +39,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     });
 
     try {
-      final response = await http.get(Uri.parse('${AppConfig.effectiveApiBase}/trips/active'));
+      final response = await http
+          .get(Uri.parse('${AppConfig.effectiveApiBase}/trips/active'));
       if (response.statusCode != 200) {
         setState(() {
           _loading = false;
@@ -49,24 +50,27 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       }
 
       final List<dynamic> data = jsonDecode(response.body);
-      final selectedRouteId = (widget.fromStop['route_id'] ?? '').toString().trim();
+      final selectedRouteId =
+          (widget.fromStop['route_id'] ?? '').toString().trim();
       final selectedShift = widget.shift.toLowerCase().trim();
 
       final List<Map<String, dynamic>> filtered = data
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .where((trip) {
-            final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
-            final route = Map<String, dynamic>.from(schedule['routes'] ?? const {});
+        final schedule =
+            Map<String, dynamic>.from(trip['schedules'] ?? const {});
+        final route = Map<String, dynamic>.from(schedule['routes'] ?? const {});
 
-            final tripRouteId = (route['id'] ?? '').toString().trim();
-            final tripShift = (trip['schedule_type'] ?? '').toString().toLowerCase().trim();
+        final tripRouteId = (route['id'] ?? '').toString().trim();
+        final tripShift =
+            (trip['schedule_type'] ?? '').toString().toLowerCase().trim();
 
-            final routeMatches = selectedRouteId.isEmpty || tripRouteId == selectedRouteId;
-            final shiftMatches = tripShift == selectedShift;
-            return routeMatches && shiftMatches;
-          })
-          .toList();
+        final routeMatches =
+            selectedRouteId.isEmpty || tripRouteId == selectedRouteId;
+        final shiftMatches = tripShift == selectedShift;
+        return routeMatches && shiftMatches;
+      }).toList();
 
       setState(() {
         _trips = filtered;
@@ -86,7 +90,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Available Buses', style: TextStyle(fontWeight: FontWeight.w900)),
+        title: const Text('Available Buses',
+            style: TextStyle(fontWeight: FontWeight.w900)),
         leading: IconButton(
           icon: const Icon(LucideIcons.chevronLeft, color: Color(0xFF1E293B)),
           onPressed: () => Navigator.pop(context),
@@ -126,15 +131,18 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(LucideIcons.serverCrash, size: 64, color: Color(0xFFCBD5E1)),
+            const Icon(LucideIcons.serverCrash,
+                size: 64, color: Color(0xFFCBD5E1)),
             const SizedBox(height: 14),
             Text(
               _error ?? 'Could not load active buses.',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF475569), fontWeight: FontWeight.w700),
+              style: const TextStyle(
+                  color: Color(0xFF475569), fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 16),
-            ElevatedButton(onPressed: _fetchActiveTrips, child: const Text('Retry')),
+            ElevatedButton(
+                onPressed: _fetchActiveTrips, child: const Text('Retry')),
           ],
         ),
       ),
@@ -150,7 +158,10 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
           const SizedBox(height: 24),
           const Text(
             'No Active Buses Found',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF1E293B)),
+            style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF1E293B)),
           ),
           const SizedBox(height: 8),
           const Text(
@@ -179,14 +190,20 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 15, offset: const Offset(0, 5))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 15,
+              offset: const Offset(0, 5))
+        ],
       ),
       child: InkWell(
         onTap: () {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => LiveTrackingScreen(trip: trip, stopInfo: widget.fromStop),
+              builder: (context) =>
+                  LiveTrackingScreen(trip: trip, stopInfo: widget.fromStop),
             ),
           );
         },
@@ -200,14 +217,18 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF1F5F9),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       bus['bus_number']?.toString() ?? 'N/A',
-                      style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF475569), fontSize: 13),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF475569),
+                          fontSize: 13),
                     ),
                   ),
                   Row(
@@ -215,14 +236,18 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       Icon(
                         LucideIcons.zap,
                         size: 14,
-                        color: (trip['is_online'] == true) ? Colors.green : Colors.red,
+                        color: (trip['is_online'] == true)
+                            ? Colors.green
+                            : Colors.red,
                       ),
                       const SizedBox(width: 4),
                       Text(
                         (trip['is_online'] == true) ? 'ONLINE' : 'OFFLINE',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          color: (trip['is_online'] == true) ? Colors.green : Colors.red,
+                          color: (trip['is_online'] == true)
+                              ? Colors.green
+                              : Colors.red,
                           fontSize: 12,
                         ),
                       ),
@@ -233,11 +258,15 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
               const SizedBox(height: 16),
               Text(
                 bus['bus_name']?.toString() ?? 'College Bus',
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF1E293B)),
+                style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF1E293B)),
               ),
               Text(
                 '${route['start_location'] ?? '-'} to ${route['end_location'] ?? '-'}',
-                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13, height: 1.4),
+                style: const TextStyle(
+                    color: Color(0xFF94A3B8), fontSize: 13, height: 1.4),
               ),
               const SizedBox(height: 20),
               const Divider(color: Color(0xFFE2E8F0)),
@@ -250,7 +279,11 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       children: [
                         const Text(
                           'ON-TIME STATUS',
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Color(0xFF94A3B8), letterSpacing: 1),
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF94A3B8),
+                              letterSpacing: 1),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -259,7 +292,9 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
-                            color: (trip['delay_status'] == 'Delayed') ? Colors.red.shade700 : Colors.blue.shade700,
+                            color: (trip['delay_status'] == 'Delayed')
+                                ? Colors.red.shade700
+                                : Colors.blue.shade700,
                             fontSize: 15,
                           ),
                         ),
@@ -274,7 +309,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => LiveTrackingScreen(trip: trip, stopInfo: widget.fromStop),
+                            builder: (context) => LiveTrackingScreen(
+                                trip: trip, stopInfo: widget.fromStop),
                           ),
                         );
                       },
@@ -282,7 +318,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                         backgroundColor: const Color(0xFFF59E0B),
                         foregroundColor: const Color(0xFF1E293B),
                         minimumSize: const Size(0, 44),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
                       child: const Row(
@@ -290,7 +327,9 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                         children: [
                           Icon(LucideIcons.navigation, size: 16),
                           SizedBox(width: 8),
-                          Text('TRACK', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+                          Text('TRACK',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w900, fontSize: 14)),
                         ],
                       ),
                     ),
