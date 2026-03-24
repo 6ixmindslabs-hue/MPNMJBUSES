@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -215,8 +215,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(LucideIcons.bus,
-                          color: Color(0xFF1E293B), size: 44),
+                      ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.asset("assets/images/app_icon.png", width: 44, height: 44)),
                       const Spacer(),
                       IconButton(
                         onPressed: _loading ? null : _fetchStops,
@@ -415,17 +414,24 @@ class _SearchScreenState extends State<SearchScreen> {
           DropdownButton<String>(
             value: safeValue,
             isExpanded: true,
+            isDense: true,
             underline: const SizedBox(),
+            alignment: AlignmentDirectional.centerStart,
             hint: const Text('Choose a stop...'),
             icon: const Icon(LucideIcons.chevronDown, size: 16),
             onChanged: onChanged,
             items: shiftStops.map((stop) {
               return DropdownMenuItem<String>(
                 value: stop['id'],
-                child: Text(
-                  _displayStopLabel(stop, stopNameCounts),
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 16),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _displayStopLabel(stop, stopNameCounts),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
                 ),
               );
             }).toList(),
@@ -487,14 +493,18 @@ class _SearchScreenState extends State<SearchScreen> {
                       ? const Color(0xFFF59E0B)
                       : const Color(0xFF64748B)),
               const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: active
-                      ? const Color(0xFF1E293B)
-                      : const Color(0xFF64748B),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: active
+                        ? const Color(0xFF1E293B)
+                        : const Color(0xFF64748B),
+                  ),
                 ),
               ),
             ],

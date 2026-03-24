@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
@@ -1673,11 +1673,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ),
             ],
           ),
-          child: const Icon(
-            LucideIcons.bus,
-            size: 16,
-            color: Color(0xFF1E293B),
-          ),
+          child: ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.asset("assets/images/app_icon.png", width: 18, height: 18)),
         ),
       ),
     );
@@ -1728,31 +1724,40 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: _locationError == null ? Colors.green : Colors.red,
-                      shape: BoxShape.circle,
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: _locationError == null ? Colors.green : Colors.red,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    _locationError == null ? 'LIVE UPDATES' : 'RECONNECTING',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF1E293B),
-                      fontSize: 12,
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        _locationError == null ? 'LIVE UPDATES' : 'RECONNECTING',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF1E293B),
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(width: 12),
               Text(
                 '${speed.toStringAsFixed(0)} KM/H',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
                 style: const TextStyle(
                   fontWeight: FontWeight.w900,
                   color: Color(0xFFF59E0B),
@@ -2099,11 +2104,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             ),
             child: Transform.rotate(
               angle: heading,
-              child: const Icon(
-                LucideIcons.bus,
-                color: Color(0xFF1E293B),
-                size: 22,
-              ),
+              child: ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.asset("assets/images/app_icon.png", width: 24, height: 24)),
             ),
           ),
           Positioned(
@@ -2427,14 +2428,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                         : const Color(0xFF94A3B8),
                   ),
                   const SizedBox(width: 4),
-                  Text(
-                    distanceLabel,
-                    style: TextStyle(
-                      color: isArrivingNear
-                          ? const Color(0xFFF59E0B)
-                          : const Color(0xFF94A3B8),
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                  Expanded(
+                    child: Text(
+                      distanceLabel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isArrivingNear
+                            ? const Color(0xFFF59E0B)
+                            : const Color(0xFF94A3B8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -2509,3 +2514,4 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
   }
 }
+

@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:lucide_icons/lucide_icons.dart';
@@ -94,8 +94,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Available Buses',
-            style: TextStyle(fontWeight: FontWeight.w900)),
+        title: Row(children: [ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.asset("assets/images/app_icon.png", width: 32, height: 32)), const SizedBox(width: 12), const Text("Available Buses", style: TextStyle(fontWeight: FontWeight.w900))]),
         leading: IconButton(
           icon: const Icon(LucideIcons.chevronLeft, color: Color(0xFF1E293B)),
           onPressed: () => Navigator.pop(context),
@@ -158,7 +157,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(LucideIcons.bus, size: 80, color: Color(0xFFE2E8F0)),
+          Image.asset("assets/images/app_icon.png", width: 120, height: 120, opacity: const AlwaysStoppedAnimation(0.3)),
           const SizedBox(height: 24),
           const Text(
             'No Active Buses Found',
@@ -218,24 +217,32 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      bus['bus_number']?.toString() ?? 'N/A',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF475569),
-                          fontSize: 13),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          bus['bus_number']?.toString() ?? 'N/A',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF475569),
+                              fontSize: 13),
+                        ),
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 12),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         LucideIcons.zap,
@@ -269,45 +276,47 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
               ),
               Text(
                 '${route['start_location'] ?? '-'} to ${route['end_location'] ?? '-'}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                     color: Color(0xFF94A3B8), fontSize: 13, height: 1.4),
               ),
               const SizedBox(height: 20),
               const Divider(color: Color(0xFFE2E8F0)),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'ON-TIME STATUS',
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF94A3B8),
-                              letterSpacing: 1),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 360;
+                  final statusBlock = Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'ON-TIME STATUS',
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF94A3B8),
+                            letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        (trip['delay_status'] ?? 'On Time').toString(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: (trip['delay_status'] == 'Delayed')
+                              ? Colors.red.shade700
+                              : Colors.blue.shade700,
+                          fontSize: 15,
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          (trip['delay_status'] ?? 'On Time').toString(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: (trip['delay_status'] == 'Delayed')
-                                ? Colors.red.shade700
-                                : Colors.blue.shade700,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
+                      ),
+                    ],
+                  );
+
+                  final trackButton = SizedBox(
                     height: 44,
+                    width: compact ? double.infinity : null,
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.push(
@@ -328,6 +337,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       ),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(LucideIcons.navigation, size: 16),
                           SizedBox(width: 8),
@@ -337,8 +347,27 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                         ],
                       ),
                     ),
-                  ),
-                ],
+                  );
+
+                  if (compact) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        statusBlock,
+                        const SizedBox(height: 14),
+                        trackButton,
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(child: statusBlock),
+                      const SizedBox(width: 12),
+                      trackButton,
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -347,3 +376,4 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     );
   }
 }
+
