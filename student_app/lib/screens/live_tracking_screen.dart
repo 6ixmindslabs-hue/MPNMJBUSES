@@ -685,18 +685,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       ];
     }
 
-    final activeSegmentStartDistance = math.min(
-      _currentRouteDistanceMeters.toDouble(),
-      nextStopRouteDistance,
-    );
-    final activeSegmentEndDistance = math.max(
-      _currentRouteDistanceMeters.toDouble(),
-      nextStopRouteDistance,
-    );
-
     final contextSegments = <List<LatLng>>[
-      _sliceGeometryByDistance(_fullRouteGeometry, 0, activeSegmentStartDistance),
-      _sliceGeometryByDistance(_fullRouteGeometry, activeSegmentEndDistance),
+      _sliceGeometryByDistance(_fullRouteGeometry, 0, _currentRouteDistanceMeters.toDouble()),
     ].where((segment) => segment.length >= 2).toList();
 
     if (contextSegments.isEmpty) {
@@ -807,7 +797,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       setState(() {
         _routeStops = routeStops;
         _activeNextStopLocation = nextStopLocation;
-        _activeRouteTailGeometry = nextStopGeometry;
+        _activeRouteTailGeometry = _sliceGeometryByDistance(routeGeometryForDisplay, routeDistanceMeters);
         _activeRouteGeometry = _buildActiveRouteSegment(
           busLocation: _displayBusLocation,
           routeSegment: _activeRouteTailGeometry,
