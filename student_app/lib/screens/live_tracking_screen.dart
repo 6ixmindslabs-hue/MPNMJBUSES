@@ -1377,11 +1377,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       widget.trip['schedules'] ?? const {},
     );
     final bus = Map<String, dynamic>.from(schedules['buses'] ?? const {});
+    final hasTimelineContent = _loadingStops || _routeStops.isNotEmpty;
+    final initialSheetSize = hasTimelineContent ? 0.34 : 0.26;
+    final snapSizes = hasTimelineContent
+        ? const [0.16, 0.34, 0.58, 0.9]
+        : const [0.16, 0.26, 0.42];
 
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
+        toolbarHeight: 72,
         title: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
               'WHERE IS MY BUS',
@@ -1394,7 +1401,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             ),
             Text(
               bus['bus_name']?.toString() ?? 'Bus',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
             ),
           ],
         ),
@@ -1455,11 +1464,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             top: false,
             child: DraggableScrollableSheet(
               expand: false,
-              initialChildSize: 0.42,
-              minChildSize: 0.24,
-              maxChildSize: 0.86,
+              initialChildSize: initialSheetSize,
+              minChildSize: 0.16,
+              maxChildSize: 0.9,
               snap: true,
-              snapSizes: const [0.24, 0.42, 0.68, 0.86],
+              snapSizes: snapSizes,
               builder: (context, scrollController) =>
                   _buildDetailsSheet(scrollController),
             ),
@@ -1539,13 +1548,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFFF8FAFC),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(32),
           topRight: Radius.circular(32),
         ),
-        boxShadow: [
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: const [
           BoxShadow(
             color: Color(0x1A0F172A),
             blurRadius: 24,
@@ -1568,46 +1579,102 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             SliverToBoxAdapter(child: Center(child: _buildSheetHandle())),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
                 child: _buildLiveOverlay(),
               ),
             ),
-            const SliverToBoxAdapter(child: SizedBox(height: 20)),
-            const SliverToBoxAdapter(
+            const SliverToBoxAdapter(child: SizedBox(height: 14)),
+            SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  'STATION TIMELINE',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11,
-                    color: Color(0xFF94A3B8),
-                    letterSpacing: 1.5,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: _buildStopAlarmPanel(),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            if (_routeStops.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'STATION TIMELINE',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 11,
+                          color: Color(0xFF94A3B8),
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      Text(
+                        '${_routeStops.length} stops',
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 18)),
+            if (_routeStops.isNotEmpty)
+              const SliverToBoxAdapter(child: SizedBox(height: 18)),
             if (_loadingStops)
-              const SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(child: CircularProgressIndicator()),
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: _SheetStateCard(
+                    child: SizedBox(
+                      height: 96,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
+                ),
               )
             else if (_routeStops.isEmpty)
-              const SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(
-                  child: Text(
-                    'No route stops configured yet.',
-                    style: TextStyle(
-                      color: Color(0xFF94A3B8),
-                      fontWeight: FontWeight.w700,
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: _SheetStateCard(
+                    child: SizedBox(
+                      height: 132,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            LucideIcons.mapPinned,
+                            color: Color(0xFFCBD5E1),
+                            size: 30,
+                          ),
+                          SizedBox(height: 10),
+                          Text(
+                            'Route details are syncing.',
+                            style: TextStyle(
+                              color: Color(0xFF1E293B),
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            'The live bus card stays active while stop data loads.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               )
             else
               SliverToBoxAdapter(child: _buildTimelineSection(bottomInset)),
+            const SliverToBoxAdapter(child: SizedBox(height: 10)),
           ],
         ),
       ),
@@ -1706,16 +1773,26 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             : 'ETA $_etaMinutes min';
     final delayText =
         _delayStatus == 'Delayed' ? 'Delayed by $_delayMinutes min' : 'On time';
+    final isOffRoute = _liveSnapshot?['is_off_route'] == true &&
+        _distanceToRouteMeters >= _offRouteVisualThresholdMeters;
+    final connectionColor =
+        _locationError == null ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+    final connectionLabel =
+        _locationError == null ? 'LIVE UPDATES' : 'RECONNECTING';
+    final headlineText = nextStop != null
+        ? 'Next stop ${nextStop['stop_name']}'
+        : 'Live bus tracking is warming up';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 20,
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 18,
             offset: const Offset(0, 10),
           ),
         ],
@@ -1725,120 +1802,149 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         children: [
           Row(
             children: [
-              Expanded(
-                child: Row(
+              _buildConnectionBadge(
+                label: connectionLabel,
+                color: connectionColor,
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: _locationError == null ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
+                    const Text(
+                      'SPEED',
+                      style: TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.1,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        _locationError == null ? 'LIVE UPDATES' : 'RECONNECTING',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF1E293B),
-                          fontSize: 12,
-                        ),
+                    Text(
+                      '${speed.toStringAsFixed(0)} KM/H',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1E293B),
+                        fontSize: 14,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Text(
-                '${speed.toStringAsFixed(0)} KM/H',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFFF59E0B),
-                  fontSize: 14,
-                ),
-              ),
             ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            headlineText,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF1E293B),
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              height: 1.2,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
-            _followBus
-                ? 'Map is following the snapped live route.'
-                : 'Follow mode paused. Drag freely, then tap the target button to recenter.',
+            nextStop == null
+                ? 'Waiting for stable telemetry and route context.'
+                : '${_formatDistance(_distanceToNextStopMeters)} away on the live path.',
             style: const TextStyle(
               color: Color(0xFF64748B),
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 4),
-          if (nextStop != null)
-            Text(
-              _liveSnapshot?['is_off_route'] == true &&
-                      _distanceToRouteMeters >= _offRouteVisualThresholdMeters
-                  ? 'Off route near ${nextStop['stop_name']}  |  ${_formatDistance(_distanceToRouteMeters)} away from route'
-                  : 'Next stop: ${nextStop['stop_name']}  |  ${_formatDistance(_distanceToNextStopMeters)}  |  $etaText',
-              style: TextStyle(
-                color: _liveSnapshot?['is_off_route'] == true &&
-                        _distanceToRouteMeters >= _offRouteVisualThresholdMeters
-                    ? const Color(0xFFDC2626)
-                    : const Color(0xFF475569),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
+          if (!_followBus) ...[
+            const SizedBox(height: 14),
+            _buildContextBanner(
+              icon: LucideIcons.hand,
+              backgroundColor: const Color(0xFFF8FAFC),
+              borderColor: const Color(0xFFE2E8F0),
+              iconColor: const Color(0xFF475569),
+              message:
+                  'Follow mode paused. Drag freely, then tap the target button to recenter.',
             ),
-          if (nextStop != null) const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _buildInfoPill(
-                icon: LucideIcons.clock3,
-                label: etaText,
-                color: const Color(0xFFF59E0B),
-              ),
-              _buildInfoPill(
-                icon: _delayStatus == 'Delayed'
-                    ? LucideIcons.timerOff
-                    : LucideIcons.badgeCheck,
-                label: delayText,
-                color: _delayStatus == 'Delayed'
-                    ? const Color(0xFFDC2626)
-                    : const Color(0xFF2563EB),
-              ),
-              _buildInfoPill(
-                icon: LucideIcons.navigation,
-                label: '${_formatDistance(_remainingRouteDistanceMeters)} left',
-                color: const Color(0xFF475569),
-              ),
-            ],
+          ],
+          if (isOffRoute) ...[
+            const SizedBox(height: 12),
+            _buildContextBanner(
+              icon: LucideIcons.routeOff,
+              backgroundColor: const Color(0xFFFEF2F2),
+              borderColor: const Color(0xFFFECACA),
+              iconColor: const Color(0xFFDC2626),
+              textColor: const Color(0xFFB91C1C),
+              message:
+                  'Off route near ${nextStop?['stop_name'] ?? 'the corridor'} and ${_formatDistance(_distanceToRouteMeters)} away from the planned route.',
+            ),
+          ],
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cardWidth = constraints.maxWidth >= 420
+                  ? (constraints.maxWidth - 24) / 3
+                  : (constraints.maxWidth - 12) / 2;
+
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  _buildMetricCard(
+                    width: cardWidth,
+                    icon: LucideIcons.clock3,
+                    label: 'ETA',
+                    value: etaText,
+                    color: const Color(0xFFF59E0B),
+                  ),
+                  _buildMetricCard(
+                    width: cardWidth,
+                    icon: _delayStatus == 'Delayed'
+                        ? LucideIcons.timerOff
+                        : LucideIcons.badgeCheck,
+                    label: 'STATUS',
+                    value: delayText,
+                    color: _delayStatus == 'Delayed'
+                        ? const Color(0xFFDC2626)
+                        : const Color(0xFF2563EB),
+                  ),
+                  _buildMetricCard(
+                    width: cardWidth,
+                    icon: LucideIcons.navigation,
+                    label: 'REMAINING',
+                    value: '${_formatDistance(_remainingRouteDistanceMeters)} left',
+                    color: const Color(0xFF475569),
+                  ),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 12),
-          _buildStopAlarmPanel(),
-          const SizedBox(height: 6),
+          const SizedBox(height: 14),
           if (_loadingLocation)
-            const Text(
-              'Loading live location...',
-              style: TextStyle(
-                color: Color(0xFF64748B),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
+            _buildContextBanner(
+              icon: LucideIcons.refreshCw,
+              backgroundColor: const Color(0xFFF8FAFC),
+              borderColor: const Color(0xFFE2E8F0),
+              iconColor: const Color(0xFF64748B),
+              message: 'Loading live location...',
             )
           else if (_locationError != null)
-            Text(
-              _locationError!,
-              style: const TextStyle(
-                color: Color(0xFFDC2626),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
+            _buildContextBanner(
+              icon: LucideIcons.wifiOff,
+              backgroundColor: const Color(0xFFFEF2F2),
+              borderColor: const Color(0xFFFECACA),
+              iconColor: const Color(0xFFDC2626),
+              textColor: const Color(0xFFB91C1C),
+              message: _locationError!,
             )
           else if (_lastUpdatedAt != null)
             Text(
@@ -1880,14 +1986,21 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     }
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
-        borderRadius: BorderRadius.circular(16),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color:
               _alarmPlaying ? const Color(0xFFFCA5A5) : const Color(0xFFFDE68A),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1899,7 +2012,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 height: 34,
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   _alarmPlaying ? LucideIcons.bellRing : LucideIcons.alarmClock,
@@ -2005,31 +2118,147 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     );
   }
 
-  Widget _buildInfoPill({
-    required IconData icon,
+  Widget _buildConnectionBadge({
     required String label,
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 6),
+          Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
           Text(
             label,
             style: TextStyle(
               color: color,
               fontSize: 11,
               fontWeight: FontWeight.w900,
+              letterSpacing: 0.6,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildContextBanner({
+    required IconData icon,
+    required Color backgroundColor,
+    required Color borderColor,
+    required Color iconColor,
+    required String message,
+    Color textColor = const Color(0xFF475569),
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(icon, size: 16, color: iconColor),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricCard({
+    required double width,
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 16, color: color),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    value,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF1E293B),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2511,6 +2740,33 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SheetStateCard extends StatelessWidget {
+  const _SheetStateCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }
