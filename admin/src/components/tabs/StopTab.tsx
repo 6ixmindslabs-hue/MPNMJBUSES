@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { supabase } from '../../lib/supabase';
 import { rebuildRouteGeometry } from '../../lib/routingApi';
+import { resolveRoutePolyline } from '../../lib/routeGeometry';
 import { Stop, Route } from '../../types';
 import { useStore } from '../../store';
 import { ConfirmModal } from '../ui/Modal';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Trash2, Clock, Globe, Edit2, Target, Info, SearchX, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
@@ -67,15 +68,13 @@ const StopTab = () => {
   const filteredStops = allStops.filter(
     (stop) => (stop.trip_direction || 'outbound') === activeDirection
   );
+  const selectedRoute = routes.find((route) => route.id === selectedRouteId) || null;
+  const activeRoutePolyline = resolveRoutePolyline(selectedRoute, activeDirection);
 
   const rebuildGeometryTargets = async (targets: GeometryTarget[]) => {
-    const uniqueTargets = targets.filter((target, index, list) =>
-      list.findIndex(
-        (entry) =>
-          entry.route_id === target.route_id &&
-          entry.route_id === target.route_id
-      ) === index
-    );
+    const uniqueTargets = Array.from(
+      new Set(targets.map((target) => target.route_id).filter(Boolean))
+    ).map((route_id) => ({ route_id }));
 
     for (const target of uniqueTargets) {
       const geometryResult = await rebuildRouteGeometry(target.route_id);
@@ -137,6 +136,7 @@ const StopTab = () => {
         }
 
         await rebuildGeometryTargets(targets);
+        await fetchRoutes();
       } catch (geometryErr: any) {
         addToast(geometryErr.message || 'Stop saved, but geometry refresh failed.', 'error');
       }
@@ -179,6 +179,7 @@ const StopTab = () => {
           const geometryResult = await rebuildRouteGeometry(targetStop.route_id);
           if (geometryResult.ok) {
             addToast('Road geometry refreshed');
+            await fetchRoutes();
           } else if (geometryResult.pendingStops && geometryResult.message) {
             addToast(geometryResult.message);
           }
@@ -330,6 +331,18 @@ const StopTab = () => {
           <MapContainer center={[12.9716, 77.5946]} zoom={13} className="h-full w-full">
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <MapHandler />
+            {activeRoutePolyline.length >= 2 && (
+              <>
+                <Polyline
+                  positions={activeRoutePolyline}
+                  pathOptions={{ color: '#f59e0b', weight: 6, opacity: 0.2 }}
+                />
+                <Polyline
+                  positions={activeRoutePolyline}
+                  pathOptions={{ color: '#d97706', weight: 3, opacity: 0.9 }}
+                />
+              </>
+            )}
             {/* Preview marker for the coordinate being set */}
             {latValue && lngValue && (
               <Marker
@@ -352,10 +365,18 @@ const StopTab = () => {
             <p className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-2">
               <Info size={10} className="inline mr-1" /> Click map to set location
             </p>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full bg-amber-400 border-2 border-amber-700 shrink-0"></div>
-                <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
+              <div className="flex flex-col gap-1">
+                {activeRoutePolyline.length >= 2 && (
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-[3px] rounded-full bg-amber-600 shrink-0"></div>
+                    <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
+                      {activeDirection} route
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-amber-400 border-2 border-amber-700 shrink-0"></div>
+                  <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
                   {activeDirection} stop
                 </span>
               </div>

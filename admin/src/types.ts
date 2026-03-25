@@ -25,6 +25,21 @@ export interface Route {
   route_code: string;
   start_location: string;
   end_location: string;
+  name?: string;
+  description?: string;
+  polyline?: Array<[number, number]> | string | null;
+  geometry?: {
+    provider?: string;
+    profile?: string;
+    updated_at?: string;
+    paths?: Record<
+      string,
+      {
+        polyline?: string | null;
+        coordinates?: Array<[number, number]> | null;
+      }
+    > | null;
+  } | null;
   created_at?: string;
 }
 
