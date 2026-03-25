@@ -145,63 +145,6 @@ function normalizeDriverAssignment({
   };
 }
 
-async function findActiveTripConflicts({ driverId, busId, scheduleType }) {
-  let query = supabaseAdmin
-    .from('trips')
-    .select('id, schedule_id, driver_id, bus_id, status, started_at, schedule_type')
-    .in('status', ACTIVE_TRIP_STATUSES);
-
-  if (scheduleType) {
-    query = query.eq('schedule_type', scheduleType);
-  }
-
-  query = query.order('started_at', { ascending: false }).limit(10);
-
-  if (driverId && busId) {
-    query = query.or(`driver_id.eq.${driverId},bus_id.eq.${busId}`);
-  } else if (driverId) {
-    query = query.eq('driver_id', driverId);
-  } else if (busId) {
-    query = query.eq('bus_id', busId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return data || [];
-}
-
-function buildTripConflictMessage(conflicts, { driverId, busId }) {
-  const driverConflict = conflicts.find((trip) => trip.driver_id === driverId);
-  const busConflict = conflicts.find((trip) => trip.bus_id === busId);
-
-  if (driverConflict && busConflict) {
-    return {
-      code: 'DRIVER_AND_BUS_BUSY',
-      message: 'Selected driver and bus are already in active trips.',
-      driver_trip_id: driverConflict.id,
-      bus_trip_id: busConflict.id,
-    };
-  }
-
-  if (driverConflict) {
-    return {
-      code: 'DRIVER_BUSY',
-      message: 'Driver already has an active trip. End that trip before starting a new one.',
-      driver_trip_id: driverConflict.id,
-    };
-  }
-
-  if (busConflict) {
-    return {
-      code: 'BUS_BUSY',
-      message: 'Bus already has an active trip. End that trip before starting a new one.',
-      bus_trip_id: busConflict.id,
-    };
-  }
-
-  return null;
-}
-
 async function fetchLatestTelemetryByTripIds(tripIds) {
   const safeTripIds = (tripIds || []).filter(Boolean);
   if (!safeTripIds.length) return {};
@@ -580,35 +523,12 @@ router.get('/schedules', async (req, res) => {
 });
 
 router.post('/schedules/validate-assignment', async (req, res) => {
-  const { driver_id, bus_id, schedule_id, schedule_type } = req.body || {};
+  const { driver_id, bus_id } = req.body || {};
   if (!driver_id || !bus_id) {
     return res.status(400).json({ error: 'driver_id and bus_id are required' });
   }
 
-  try {
-    const conflicts = await findActiveTripConflicts({
-      driverId: driver_id,
-      busId: bus_id,
-      scheduleType: schedule_type,
-    });
-
-    const filteredConflicts = schedule_id
-      ? conflicts.filter((trip) => trip.schedule_id !== schedule_id)
-      : conflicts;
-
-    const conflictPayload = buildTripConflictMessage(filteredConflicts, {
-      driverId: driver_id,
-      busId: bus_id,
-    });
-
-    if (conflictPayload) {
-      return res.status(409).json(conflictPayload);
-    }
-
-    return res.json({ ok: true });
-  } catch (error) {
-    return res.status(500).json({ error: error.message || 'Validation failed' });
-  }
+  return res.json({ ok: true });
 });
 
 router.post('/trips', requireDriverAuth, async (req, res) => {
@@ -627,23 +547,21 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       return res.status(403).json({ error: 'This schedule is not assigned to you' });
     }
 
-    const conflicts = await findActiveTripConflicts({
-      driverId: schedule.driver_id,
-      busId: schedule.bus_id,
-      scheduleType: schedule.schedule_type,
-    });
+    const { data: existingTrips, error: existingTripsError } = await supabaseAdmin
+      .from('trips')
+      .select('id, schedule_id, status, started_at')
+      .eq('schedule_id', schedule.id)
+      .in('status', ACTIVE_TRIP_STATUSES)
+      .order('started_at', { ascending: false })
+      .limit(1);
 
-    const existingTrip = conflicts.find((trip) => trip.schedule_id === schedule.id);
-    if (existingTrip) {
-      return res.json(existingTrip);
+    if (existingTripsError) {
+      throw existingTripsError;
     }
 
-    const conflictPayload = buildTripConflictMessage(conflicts, {
-      driverId: schedule.driver_id,
-      busId: schedule.bus_id,
-    });
-    if (conflictPayload) {
-      return res.status(409).json(conflictPayload);
+    const existingTrip = (existingTrips || [])[0];
+    if (existingTrip) {
+      return res.json(existingTrip);
     }
 
     const insertPayload = {

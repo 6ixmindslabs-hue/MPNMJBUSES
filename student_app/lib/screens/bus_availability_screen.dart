@@ -39,9 +39,10 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     });
 
     try {
-      final response = await http
+      final routeId = _selectedRouteId;
+      final activeResponse = await http
           .get(Uri.parse('${AppConfig.effectiveApiBase}/trips/active'));
-      if (response.statusCode != 200) {
+      if (activeResponse.statusCode != 200) {
         setState(() {
           _loading = false;
           _error = 'Unable to fetch active buses now.';
@@ -49,35 +50,51 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         return;
       }
 
-      final List<dynamic> data = jsonDecode(response.body);
-      final selectedRouteId =
-          (widget.fromStop['route_id'] ?? '').toString().trim();
-      final destinationRouteId =
-          (widget.toStop['route_id'] ?? '').toString().trim();
-      final selectedShift = widget.shift.toLowerCase().trim();
-
-      final List<Map<String, dynamic>> filtered = data
+      final List<dynamic> activeData = jsonDecode(activeResponse.body);
+      final List<Map<String, dynamic>> activeTrips = activeData
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
-          .where((trip) {
-        final schedule =
-            Map<String, dynamic>.from(trip['schedules'] ?? const {});
-        final route = Map<String, dynamic>.from(schedule['routes'] ?? const {});
+          .where(_matchesRouteAndShift)
+          .map(_normalizeActiveTrip)
+          .toList();
 
-        final tripRouteId = (route['id'] ?? '').toString().trim();
-        final tripShift =
-            (trip['schedule_type'] ?? '').toString().toLowerCase().trim();
+      final schedulesResponse = await http.get(
+        Uri.parse(
+          '${AppConfig.effectiveApiBase}/schedules?route_id=$routeId&schedule_type=${widget.shift.toLowerCase().trim()}',
+        ),
+      );
 
-        final routeMatches = selectedRouteId.isEmpty
-            ? destinationRouteId.isEmpty || tripRouteId == destinationRouteId
-            : tripRouteId == selectedRouteId &&
-                (destinationRouteId.isEmpty || tripRouteId == destinationRouteId);
-        final shiftMatches = tripShift == selectedShift;
-        return routeMatches && shiftMatches;
-      }).toList();
+      List<Map<String, dynamic>> merged = activeTrips;
+      if (schedulesResponse.statusCode == 200) {
+        final List<dynamic> scheduleData = jsonDecode(schedulesResponse.body);
+        final scheduledTrips = scheduleData
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .where(_matchesRouteAndShift)
+            .map(_normalizeScheduledTrip)
+            .toList();
+
+        if (activeTrips.isEmpty) {
+          merged = scheduledTrips;
+        } else {
+          final activeScheduleIds = activeTrips
+              .map((trip) => (trip['schedule_id'] ?? '').toString())
+              .where((id) => id.isNotEmpty)
+              .toSet();
+          merged = [
+            ...activeTrips,
+            ...scheduledTrips.where(
+              (schedule) =>
+                  !activeScheduleIds.contains(
+                    (schedule['schedule_id'] ?? '').toString(),
+                  ),
+            ),
+          ];
+        }
+      }
 
       setState(() {
-        _trips = filtered;
+        _trips = merged;
         _loading = false;
       });
     } catch (e) {
@@ -88,6 +105,99 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         _error = 'Network error while loading buses.';
       });
     }
+  }
+
+  String get _selectedRouteId {
+    final selectedRouteId = (widget.fromStop['route_id'] ?? '').toString().trim();
+    if (selectedRouteId.isNotEmpty) return selectedRouteId;
+    return (widget.toStop['route_id'] ?? '').toString().trim();
+  }
+
+  bool _matchesRouteAndShift(Map<String, dynamic> item) {
+    final selectedRouteId =
+        (widget.fromStop['route_id'] ?? '').toString().trim();
+    final destinationRouteId =
+        (widget.toStop['route_id'] ?? '').toString().trim();
+    final selectedShift = widget.shift.toLowerCase().trim();
+
+    final schedule = Map<String, dynamic>.from(item['schedules'] ?? const {});
+    final route = Map<String, dynamic>.from(
+      item['routes'] ?? schedule['routes'] ?? item['trip_route'] ?? const {},
+    );
+
+    final itemRouteId = (item['route_id'] ?? route['id'] ?? '').toString().trim();
+    final itemShift = (item['schedule_type'] ?? item['shift'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
+
+    final routeMatches = selectedRouteId.isEmpty
+        ? destinationRouteId.isEmpty || itemRouteId == destinationRouteId
+        : itemRouteId == selectedRouteId &&
+            (destinationRouteId.isEmpty || itemRouteId == destinationRouteId);
+
+    return routeMatches && itemShift == selectedShift;
+  }
+
+  Map<String, dynamic> _normalizeActiveTrip(Map<String, dynamic> trip) {
+    return {
+      ...trip,
+      'source_type': 'trip',
+      'is_trackable': true,
+    };
+  }
+
+  Map<String, dynamic> _normalizeScheduledTrip(Map<String, dynamic> schedule) {
+    return {
+      'id': 'schedule-${schedule['id']}',
+      'route_id': schedule['route_id'],
+      'schedule_id': schedule['id'],
+      'schedule_type': schedule['schedule_type'],
+      'status': 'scheduled',
+      'started_at': null,
+      'paused_at': null,
+      'completed_at': null,
+      'trip_route': null,
+      'schedules': {
+        'id': schedule['id'],
+        'start_time': schedule['start_time'],
+        'end_time': schedule['end_time'],
+        'schedule_type': schedule['schedule_type'],
+        'routes': schedule['routes'],
+        'buses': schedule['buses'],
+        'drivers': schedule['drivers'],
+      },
+      'latest_telemetry': null,
+      'is_online': false,
+      'last_seen_at': null,
+      'next_stop': null,
+      'eta_minutes': null,
+      'delay_minutes': null,
+      'delay_status': 'Scheduled',
+      'distance_to_next_stop_m': null,
+      'source_type': 'schedule',
+      'is_trackable': false,
+    };
+  }
+
+  void _openTrip(Map<String, dynamic> trip) {
+    final isTrackable = trip['is_trackable'] == true;
+    if (!isTrackable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This morning bus is scheduled but has not started live tracking yet.'),
+        ),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            LiveTrackingScreen(trip: trip, stopInfo: widget.fromStop),
+      ),
+    );
   }
 
   @override
@@ -160,7 +270,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
           Image.asset("assets/images/app_icon.png", width: 120, height: 120, opacity: const AlwaysStoppedAnimation(0.3)),
           const SizedBox(height: 24),
           const Text(
-            'No Active Buses Found',
+            'No Buses Found',
             style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
@@ -168,7 +278,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'There are currently no buses running\nfor this route and shift.',
+            'There are currently no buses configured\nfor this route and shift.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
           ),
@@ -186,6 +296,15 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
     final bus = Map<String, dynamic>.from(schedule['buses'] ?? const {});
     final route = Map<String, dynamic>.from(schedule['routes'] ?? const {});
+    final isTrackable = trip['is_trackable'] == true;
+    final isOnline = trip['is_online'] == true;
+    final isScheduledOnly = trip['source_type'] == 'schedule';
+    final statusLabel = isScheduledOnly
+        ? 'SCHEDULED'
+        : (isOnline ? 'ONLINE' : 'OFFLINE');
+    final statusColor = isScheduledOnly
+        ? const Color(0xFFF59E0B)
+        : (isOnline ? Colors.green : Colors.red);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -201,15 +320,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         ],
       ),
       child: InkWell(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) =>
-                  LiveTrackingScreen(trip: trip, stopInfo: widget.fromStop),
-            ),
-          );
-        },
+        onTap: () => _openTrip(trip),
         borderRadius: BorderRadius.circular(24),
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -247,18 +358,14 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                       Icon(
                         LucideIcons.zap,
                         size: 14,
-                        color: (trip['is_online'] == true)
-                            ? Colors.green
-                            : Colors.red,
+                        color: statusColor,
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        (trip['is_online'] == true) ? 'ONLINE' : 'OFFLINE',
+                        statusLabel,
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          color: (trip['is_online'] == true)
-                              ? Colors.green
-                              : Colors.red,
+                          color: statusColor,
                           fontSize: 12,
                         ),
                       ),
@@ -305,9 +412,11 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
-                          color: (trip['delay_status'] == 'Delayed')
-                              ? Colors.red.shade700
-                              : Colors.blue.shade700,
+                          color: isScheduledOnly
+                              ? const Color(0xFFB45309)
+                              : (trip['delay_status'] == 'Delayed')
+                                  ? Colors.red.shade700
+                                  : Colors.blue.shade700,
                           fontSize: 15,
                         ),
                       ),
@@ -318,31 +427,32 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                     height: 44,
                     width: compact ? double.infinity : null,
                     child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => LiveTrackingScreen(
-                                trip: trip, stopInfo: widget.fromStop),
-                          ),
-                        );
-                      },
+                      onPressed: isTrackable ? () => _openTrip(trip) : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF59E0B),
-                        foregroundColor: const Color(0xFF1E293B),
+                        backgroundColor: isTrackable
+                            ? const Color(0xFFF59E0B)
+                            : const Color(0xFFE2E8F0),
+                        foregroundColor: isTrackable
+                            ? const Color(0xFF1E293B)
+                            : const Color(0xFF64748B),
                         minimumSize: const Size(0, 44),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(LucideIcons.navigation, size: 16),
-                          SizedBox(width: 8),
-                          Text('TRACK',
-                              style: TextStyle(
+                          Icon(
+                            isTrackable
+                                ? LucideIcons.navigation
+                                : LucideIcons.clock3,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(isTrackable ? 'TRACK' : 'WAITING',
+                              style: const TextStyle(
                                   fontWeight: FontWeight.w900, fontSize: 14)),
                         ],
                       ),

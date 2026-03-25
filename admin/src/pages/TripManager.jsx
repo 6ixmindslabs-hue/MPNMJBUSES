@@ -81,19 +81,6 @@ const TripManager = () => {
   };
 
   const handleAssignTrip = async () => {
-    const runningTrips = Object.values(activeTripMeta);
-    const driverBusy = runningTrips.find((t) => t.driver_id === assignForm.driver_id && t.trip_id !== selectedTrip.id);
-    const busBusy = runningTrips.find((t) => t.bus_id === assignForm.bus_id && t.trip_id !== selectedTrip.id);
-
-    if (driverBusy) {
-      alert('Selected driver already has an active trip.');
-      return;
-    }
-    if (busBusy) {
-      alert('Selected bus already has an active trip.');
-      return;
-    }
-
     const { error } = await supabase
       .from('trips')
       .update({ 

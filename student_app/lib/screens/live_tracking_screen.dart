@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
@@ -1460,8 +1460,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ),
             ),
           ),
-          SafeArea(
-            top: false,
+          Align(
+            alignment: Alignment.bottomCenter,
             child: DraggableScrollableSheet(
               expand: false,
               initialChildSize: initialSheetSize,
@@ -1525,6 +1525,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               point: _displayBusLocation,
               width: 104,
               height: 104,
+              alignment: Alignment.center,
               child: _buildBusMarker(),
             ),
             ..._routeStops.asMap().entries.map(
@@ -1535,6 +1536,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     ),
                     width: 120,
                     height: 72,
+                    alignment: Alignment.bottomCenter,
                     child: _buildStopMarker(entry.value, entry.key),
                   ),
                 ),

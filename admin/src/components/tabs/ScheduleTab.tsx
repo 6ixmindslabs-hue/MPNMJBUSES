@@ -69,20 +69,6 @@ const ScheduleTab = () => {
     return () => { supabase.removeChannel(sub); };
   }, []);
 
-  const fetchData = async () => {
-    setLoading(true);
-    const { data: routeData } = await supabase.from('routes').select('*');
-    const { data: busData } = await supabase.from('buses').select('*').eq('status', 'active');
-    const { data: driverData } = await supabase.from('drivers').select('*').eq('status', 'active');
-    const { data: scheduleData } = await supabase.from('schedules').select('*, routes(start_location, end_location), buses(bus_number), drivers(name)').order('created_at', { ascending: false });
-    
-    if (routeData) setRoutes(routeData);
-    if (busData) setBuses(busData);
-    if (driverData) setDrivers(driverData);
-    if (scheduleData) setSchedules(scheduleData);
-    setLoading(false);
-  };
-
   const onSubmit = async (data: Schedule) => {
     setIsSaving(true);
     const { id, created_at, ...updateData } = data as any;
