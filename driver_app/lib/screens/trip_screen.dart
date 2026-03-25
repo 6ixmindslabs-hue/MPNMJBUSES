@@ -112,14 +112,6 @@ class _TripScreenState extends State<TripScreen> {
   Future<void> _startTracking() async {
     if (_trip == null || _submitting) return;
 
-    if ((_trip!['source'] ?? 'schedule') == 'schedule' &&
-        !_selectedLegCanStartNow()) {
-      _showError(
-        _selectedLegWindowMessage(),
-      );
-      return;
-    }
-
     setState(() => _submitting = true);
 
     try {
@@ -367,17 +359,6 @@ class _TripScreenState extends State<TripScreen> {
     }
 
     return (legs.first['trip_direction'] ?? 'outbound').toString();
-  }
-
-  bool _selectedLegCanStartNow() {
-    return _selectedLeg()?['can_start_now'] == true;
-  }
-
-  String _selectedLegWindowMessage() {
-    return (_selectedLeg()?['schedule_window_message'] ??
-            _trip?['schedule_window_message'] ??
-            'This trip can only start near its scheduled time.')
-        .toString();
   }
 
   void _showError(String message) {
@@ -672,16 +653,6 @@ class _TripScreenState extends State<TripScreen> {
       );
     }
 
-    if ((_trip?['source'] ?? 'schedule') == 'schedule' &&
-        !_selectedLegCanStartNow()) {
-      return _buildInfoCard(
-        icon: Icons.schedule_rounded,
-        iconColor: Colors.amber.shade700,
-        title: 'Trip Not Startable Yet',
-        subtitle: _selectedLegWindowMessage(),
-      );
-    }
-
     return _primaryButton(
       'START TRIP TRACKING',
       Icons.play_arrow_rounded,
@@ -781,7 +752,6 @@ class _TripScreenState extends State<TripScreen> {
   Widget _buildLegChoiceCard(Map<String, dynamic> leg) {
     final direction = (leg['trip_direction'] ?? 'outbound').toString();
     final selected = direction == _selectedTripDirection();
-    final canStartNow = leg['can_start_now'] == true;
     final label = direction == 'return' ? 'RETURN' : 'OUTBOUND';
     final start = leg['start_time']?.toString();
     final end = leg['end_time']?.toString();
@@ -839,17 +809,13 @@ class _TripScreenState extends State<TripScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: canStartNow
-                    ? const Color(0xFFDCFCE7)
-                    : const Color(0xFFFEF3C7),
+                color: const Color(0xFFDCFCE7),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                canStartNow ? 'CAN START' : 'SCHEDULED',
-                style: TextStyle(
-                  color: canStartNow
-                      ? const Color(0xFF166534)
-                      : const Color(0xFFB45309),
+                'READY',
+                style: const TextStyle(
+                  color: Color(0xFF166534),
                   fontSize: 10,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.6,

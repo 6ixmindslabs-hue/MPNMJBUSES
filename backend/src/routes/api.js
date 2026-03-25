@@ -327,11 +327,11 @@ function buildDriverAssignmentLeg(scheduleLike, options = {}) {
     end_time: leg.end_time,
     can_start_now:
       options.can_start_now_override == null
-        ? canStartScheduleNow(leg)
+        ? true
         : Boolean(options.can_start_now_override),
     schedule_window_message:
       options.schedule_window_message_override === undefined
-        ? buildScheduleWindowMessage(leg)
+        ? null
         : options.schedule_window_message_override,
   };
 }
@@ -407,18 +407,6 @@ function didTripStartOutsideScheduleWindow(trip, scheduleLike) {
 }
 
 function shouldHideActiveTrip(trip, latestTelemetry) {
-  const directionWindow = getScheduleWindowForDirection(
-    trip?.schedules || trip,
-    resolveTripDirection(trip)
-  );
-  const scheduleLike = {
-    start_time: directionWindow.start_time || trip?.start_time,
-    end_time: directionWindow.end_time || trip?.end_time,
-  };
-  if (didTripStartOutsideScheduleWindow(trip, scheduleLike)) {
-    return true;
-  }
-
   const lastSeenAt = latestTelemetry?.timestamp || null;
   const isOnline = isTelemetryOnline(lastSeenAt);
   if (isOnline) return false;
@@ -442,20 +430,7 @@ function shouldHideActiveTrip(trip, latestTelemetry) {
     }
   }
 
-  const nowSeconds = getNowSecondsInTimezone();
-  const startSeconds = parseScheduleTimeToSeconds(
-    trip?.schedules?.start_time || trip?.start_time
-  );
-  const endSeconds = parseScheduleTimeToSeconds(
-    trip?.schedules?.end_time || trip?.end_time
-  );
-
-  return hasScheduleEndedBeyondGrace(
-    nowSeconds,
-    startSeconds,
-    endSeconds,
-    ACTIVE_TRIP_STALE_GRACE_SECONDS
-  );
+  return false;
 }
 
 function normalizeActiveTripForResponse(trip) {
@@ -900,9 +875,8 @@ async function fetchCurrentDriverAssignment(driverId) {
     routes: scheduleLeg.routes,
     buses: scheduleLeg.buses,
     source: 'schedule',
-    can_start_now: selectedLeg?.can_start_now ?? canStartScheduleNow(scheduleLeg),
-    schedule_window_message:
-      selectedLeg?.schedule_window_message || buildScheduleWindowMessage(scheduleLeg),
+    can_start_now: true,
+    schedule_window_message: null,
     available_legs: availableLegs,
   });
 }
@@ -1134,13 +1108,6 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       });
     }
 
-    if (!canStartScheduleNow(scheduleLeg)) {
-      return res.status(409).json({
-        error: buildScheduleWindowMessage(scheduleLeg),
-        code: 'SCHEDULE_NOT_STARTABLE_YET',
-      });
-    }
-
     const { data: existingTrips, error: existingTripsError } = await supabaseAdmin
       .from('trips')
       .select('id, schedule_id, status, started_at, trip_direction')
@@ -1155,19 +1122,7 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
 
     const existingTrip = (existingTrips || [])[0];
     if (existingTrip) {
-      if (didTripStartOutsideScheduleWindow(existingTrip, scheduleLeg)) {
-        const { error: invalidateError } = await supabaseAdmin
-          .from('trips')
-          .update({
-            status: 'cancelled',
-            completed_at: new Date().toISOString(),
-          })
-          .eq('id', existingTrip.id);
-
-        if (invalidateError) {
-          throw invalidateError;
-        }
-      } else if (normalizeTripDirection(existingTrip.trip_direction) === requestedDirection) {
+      if (normalizeTripDirection(existingTrip.trip_direction) === requestedDirection) {
         return res.json(existingTrip);
       } else {
         return res.status(409).json({
