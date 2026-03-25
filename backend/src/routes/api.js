@@ -193,7 +193,7 @@ function isWithinScheduleWindow(nowSeconds, startSeconds, endSeconds) {
 }
 
 function isWithinTripStartWindow(nowSeconds, startSeconds, endSeconds) {
-  if (startSeconds == null || endSeconds == null) return true;
+  if (startSeconds == null || endSeconds == null) return false;
 
   if (endSeconds >= startSeconds) {
     return (
@@ -362,6 +362,9 @@ function canStartScheduleNow(schedule) {
 function buildScheduleWindowMessage(schedule) {
   const direction = normalizeTripDirection(schedule?.trip_direction);
   const directionWindow = getScheduleWindowForDirection(schedule, direction);
+  if (!directionWindow.start_time && !schedule?.start_time) {
+    return `The ${getTripDirectionLabel(direction).toLowerCase()} trip cannot start until its scheduled time is configured in admin.`;
+  }
   return `The ${getTripDirectionLabel(direction).toLowerCase()} trip can only start near ${directionWindow.start_time || schedule?.start_time || 'its scheduled time'}.`;
 }
 

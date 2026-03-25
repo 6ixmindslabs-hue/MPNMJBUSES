@@ -110,6 +110,16 @@ class _TripScreenState extends State<TripScreen> {
   Future<void> _startTracking() async {
     if (_trip == null || _submitting) return;
 
+    if ((_trip!['source'] ?? 'schedule') == 'schedule' &&
+        _trip!['can_start_now'] != true) {
+      _showError(
+        (_trip!['schedule_window_message'] ??
+                'This trip can only start near its scheduled time.')
+            .toString(),
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
@@ -590,7 +600,7 @@ class _TripScreenState extends State<TripScreen> {
     }
 
     if ((_trip?['source'] ?? 'schedule') == 'schedule' &&
-        _trip?['can_start_now'] == false) {
+        _trip?['can_start_now'] != true) {
       return _buildInfoCard(
         icon: Icons.schedule_rounded,
         iconColor: Colors.amber.shade700,
