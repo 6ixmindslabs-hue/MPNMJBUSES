@@ -8,7 +8,7 @@ const {
 
 const EARTH_RADIUS_M = 6371000;
 const POLYLINE_PRECISION = 1e5;
-const SUPPORTED_PATH_VARIANTS = ['default'];
+const SUPPORTED_PATH_VARIANTS = ['outbound', 'return'];
 
 function normalizePoint(point) {
   if (!point) return null;
@@ -232,15 +232,15 @@ function makeGeometryDocument(existingGeometry, updatesByPathKey, pathKeysToClea
   return geometryDocument;
 }
 
-async function fetchOrderedStops(routeId, scheduleType) {
+async function fetchOrderedStops(routeId, direction) {
   let query = supabaseAdmin
     .from('stops')
-    .select('id, stop_name, latitude, longitude, arrival_time')
+    .select('id, stop_name, latitude, longitude, arrival_time, trip_direction')
     .eq('route_id', routeId)
     .order('arrival_time', { ascending: true });
 
-  if (scheduleType && scheduleType !== 'daily' && scheduleType !== 'default') {
-    query = query.eq('schedule_type', scheduleType);
+  if (direction && direction !== 'default') {
+    query = query.eq('trip_direction', direction);
   }
 
   const { data, error } = await query;
@@ -329,8 +329,8 @@ async function updateRouteGeometryRecord(routeId, payload) {
 }
 
 async function rebuildRouteGeometryForRoute(routeId, options = {}) {
-  const requestedPathKey = options.pathKey || options.scheduleType || 'default';
-  const pathKeys = ['default'];
+  const requestedPathKey = options.pathKey || options.scheduleType || 'outbound';
+  const pathKeys = SUPPORTED_PATH_VARIANTS;
 
   const { data: route, error: routeError } = await supabaseAdmin
     .from('routes')
@@ -346,7 +346,7 @@ async function rebuildRouteGeometryForRoute(routeId, options = {}) {
   const clearedPaths = [];
 
   for (const pathKey of pathKeys) {
-    const stops = await fetchOrderedStops(routeId, null);
+    const stops = await fetchOrderedStops(routeId, pathKey);
     const waypointPoints = normalizePointList(stops);
     if (waypointPoints.length < 2) {
       clearedPaths.push(pathKey);

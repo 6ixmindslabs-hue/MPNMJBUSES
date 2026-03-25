@@ -10,6 +10,7 @@ import { Calendar, Clock, UserCheck, Trash2, Edit2, Link as LinkIcon, Compass, A
 
 const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
 const DAILY_SCHEDULE_TYPE = 'daily' as const;
+const DIRECTIONS = ['outbound', 'return'] as const;
 
 const ScheduleTab = () => {
   const [schedules, setSchedules] = useState<any[]>([]);
@@ -27,14 +28,20 @@ const ScheduleTab = () => {
   const selectedRouteId = watch('route_id');
 
   const ensureRouteReady = async (routeId: string) => {
-    const { count, error } = await supabase
+    const { data, error } = await supabase
       .from('stops')
-      .select('id', { count: 'exact', head: true })
+      .select('id, trip_direction')
       .eq('route_id', routeId);
 
     if (error) throw error;
-    if ((count || 0) < 2) {
-      throw new Error('Add at least 2 stops before saving this schedule.');
+    const stops = data || [];
+    for (const direction of DIRECTIONS) {
+      const count = stops.filter(
+        (stop) => (stop.trip_direction || 'outbound') === direction
+      ).length;
+      if (count < 2) {
+        throw new Error(`Add at least 2 ${direction} stops before saving this schedule.`);
+      }
     }
 
     const geometryResult = await rebuildRouteGeometry(routeId);
@@ -71,7 +78,12 @@ const ScheduleTab = () => {
 
   const onSubmit = async (data: Schedule) => {
     setIsSaving(true);
-    const payload = { ...data, schedule_type: DAILY_SCHEDULE_TYPE };
+    const payload = {
+      ...data,
+      schedule_type: DAILY_SCHEDULE_TYPE,
+      start_time: data.outbound_start_time,
+      end_time: data.return_end_time || data.outbound_end_time,
+    };
     const { id, created_at, ...updateData } = payload as any;
     
     try {
@@ -123,7 +135,11 @@ const ScheduleTab = () => {
       driver_id: schedule.driver_id,
       schedule_type: DAILY_SCHEDULE_TYPE,
       start_time: schedule.start_time,
-      end_time: schedule.end_time
+      end_time: schedule.end_time,
+      outbound_start_time: schedule.outbound_start_time || schedule.start_time,
+      outbound_end_time: schedule.outbound_end_time || schedule.end_time,
+      return_start_time: schedule.return_start_time,
+      return_end_time: schedule.return_end_time
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -198,12 +214,20 @@ const ScheduleTab = () => {
                </h3>
                <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none italic">T-Start</label>
-                    <input type="time" {...register('start_time', { required: 'X required' })} className="input-premium font-black text-xs text-center tracking-[0.1em]" />
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none italic">Outbound Start</label>
+                    <input type="time" {...register('outbound_start_time', { required: 'Outbound start required' })} className="input-premium font-black text-xs text-center tracking-[0.1em]" />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none italic">T-End</label>
-                    <input type="time" {...register('end_time', { required: 'Y required' })} className="input-premium font-black text-xs text-center tracking-[0.1em]" />
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none italic">Outbound End</label>
+                    <input type="time" {...register('outbound_end_time', { required: 'Outbound end required' })} className="input-premium font-black text-xs text-center tracking-[0.1em]" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none italic">Return Start</label>
+                    <input type="time" {...register('return_start_time', { required: 'Return start required' })} className="input-premium font-black text-xs text-center tracking-[0.1em]" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none italic">Return End</label>
+                    <input type="time" {...register('return_end_time', { required: 'Return end required' })} className="input-premium font-black text-xs text-center tracking-[0.1em]" />
                   </div>
                </div>
             </div>
@@ -214,7 +238,7 @@ const ScheduleTab = () => {
                   <Activity size={10} /> Daily Service
                </h3>
                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs font-black uppercase tracking-widest text-gray-700 text-center">
-                  One Daily Trip
+                  One Daily Service • Outbound + Return
                </div>
             </div>
           </div>
@@ -294,8 +318,12 @@ const ScheduleTab = () => {
                     </td>
                     <td className="px-6 py-4 text-center">
                        <div className="flex flex-col gap-1 items-center">
-                          <span className="bg-gray-900 text-white px-2 py-0.5 rounded text-[10px] font-black border border-gray-800 uppercase italic shadow-sm">{s.start_time}</span>
-                          <span className="text-[10px] font-black text-gray-400 uppercase italic">{s.end_time}</span>
+                          <span className="bg-gray-900 text-white px-2 py-0.5 rounded text-[10px] font-black border border-gray-800 uppercase italic shadow-sm">
+                            OUT {s.outbound_start_time || s.start_time} → {s.outbound_end_time || s.end_time}
+                          </span>
+                          <span className="text-[10px] font-black text-gray-400 uppercase italic">
+                            RET {s.return_start_time || '--'} → {s.return_end_time || '--'}
+                          </span>
                        </div>
                     </td>
                     <td className="px-6 py-4 text-right">

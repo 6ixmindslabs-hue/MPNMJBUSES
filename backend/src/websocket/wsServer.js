@@ -61,7 +61,7 @@ function setupWebSocketServer(server) {
           const { data: trip, error: tripErr } = await supabaseAdmin
             .from('trips')
             .select(`
-              id, route_id, status, driver_id,
+              id, route_id, status, driver_id, trip_direction,
               trip_route:route_id (id, start_location, end_location),
               schedules:schedule_id (
                 routes:route_id (id, start_location, end_location),
@@ -86,8 +86,9 @@ function setupWebSocketServer(server) {
           // Fetch ordered stops for this route for ETA calculations
           const { data: stops } = await supabaseAdmin
             .from('stops')
-            .select('id, stop_name, latitude, longitude, arrival_time')
+            .select('id, stop_name, latitude, longitude, arrival_time, trip_direction')
             .eq('route_id', trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id)
+            .eq('trip_direction', trip.trip_direction || 'outbound')
             .order('arrival_time', { ascending: true });
 
           clientMeta.set(ws, {
@@ -103,6 +104,7 @@ function setupWebSocketServer(server) {
               route: trip.trip_route || trip.schedules?.routes,
               bus: trip.schedules?.buses,
               stops: stops || [],
+              tripDirection: trip.trip_direction || 'outbound',
             },
           }));
           console.log(`[WS] Driver ${driverId} authenticated for trip ${tripId}`);

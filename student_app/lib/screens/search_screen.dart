@@ -80,6 +80,54 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  String _tripDirectionOf(Map<String, dynamic> stop) {
+    return stop['trip_direction'] == 'return' ? 'return' : 'outbound';
+  }
+
+  String _tripDirectionLabel(String direction) {
+    return direction == 'return' ? 'Return' : 'Outbound';
+  }
+
+  List<Map<String, dynamic>> _routeStopsForDirection(
+    String routeId,
+    String direction,
+  ) {
+    return _stops
+        .where(
+          (stop) =>
+              stop['route_id']?.toString() == routeId &&
+              _tripDirectionOf(stop) == direction,
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a['arrival_time'] ?? '')
+            .toString()
+            .compareTo((b['arrival_time'] ?? '').toString()),
+      );
+  }
+
+  String? _resolveDirectionForJourney(
+    Map<String, dynamic> fromStop,
+    Map<String, dynamic> toStop,
+    String routeId,
+  ) {
+    for (final direction in const ['outbound', 'return']) {
+      final routeStops = _routeStopsForDirection(routeId, direction);
+      final fromIndex = routeStops.indexWhere(
+        (stop) => stop['id']?.toString() == fromStop['id']?.toString(),
+      );
+      final toIndex = routeStops.indexWhere(
+        (stop) => stop['id']?.toString() == toStop['id']?.toString(),
+      );
+
+      if (fromIndex >= 0 && toIndex >= 0 && fromIndex < toIndex) {
+        return direction;
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _fetchStops() async {
     setState(() {
       _loading = true;
@@ -144,28 +192,17 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
-    final routeStops = _stops
-        .where(
-          (stop) => stop['route_id']?.toString() == fromRouteId,
-        )
-        .toList()
-      ..sort(
-        (a, b) => (a['arrival_time'] ?? '')
-            .toString()
-            .compareTo((b['arrival_time'] ?? '').toString()),
-      );
-    final fromIndex = routeStops.indexWhere(
-      (stop) => stop['id']?.toString() == _fromStopId,
-    );
-    final toIndex = routeStops.indexWhere(
-      (stop) => stop['id']?.toString() == _toStopId,
+    final tripDirection = _resolveDirectionForJourney(
+      fromStop,
+      toStop,
+      fromRouteId,
     );
 
-    if (fromIndex < 0 || toIndex < 0 || fromIndex >= toIndex) {
+    if (tripDirection == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Choose pickup and destination in the valid route order.',
+            'Choose pickup and destination on the same valid direction.',
           ),
         ),
       );
@@ -180,6 +217,7 @@ class _SearchScreenState extends State<SearchScreen> {
         builder: (context) => BusAvailabilityScreen(
           fromStop: fromStop,
           toStop: toStop,
+          direction: tripDirection,
         ),
       ),
     );
@@ -392,9 +430,12 @@ class _SearchScreenState extends State<SearchScreen> {
   }) {
     final routeStops = _stops.cast<Map<String, dynamic>>().toList()
       ..sort(
-        (a, b) => (a['arrival_time'] ?? '')
-            .toString()
-            .compareTo((b['arrival_time'] ?? '').toString()),
+        (a, b) => ((a['route_id'] ?? '').toString() +
+                (a['trip_direction'] ?? '').toString() +
+                (a['arrival_time'] ?? '').toString())
+            .compareTo((b['route_id'] ?? '').toString() +
+                (b['trip_direction'] ?? '').toString() +
+                (b['arrival_time'] ?? '').toString()),
       );
     final stopNameCounts = <String, int>{};
     for (final stop in routeStops) {
@@ -487,10 +528,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
     final duplicateCount = stopNameCounts[stopName.toLowerCase()] ?? 0;
     if (duplicateCount <= 1) {
-      return stopName;
+      return '$stopName (${_tripDirectionLabel(_tripDirectionOf(stop))})';
     }
 
-    return '$stopName (${_routeLabelForStop(stop)})';
+    return '$stopName (${_tripDirectionLabel(_tripDirectionOf(stop))} • ${_routeLabelForStop(stop)})';
   }
 
   String _routeLabelForStop(Map<String, dynamic> stop) {

@@ -140,7 +140,10 @@ class AuthService {
     return payload;
   }
 
-  static Future<Map<String, dynamic>> startAssignedTrip(String scheduleId) async {
+  static Future<Map<String, dynamic>> startAssignedTrip(
+    String scheduleId,
+    String tripDirection,
+  ) async {
     final token = accessToken;
     if (token == null) {
       throw const DriverAuthException('Session expired. Please log in again.');
@@ -149,7 +152,10 @@ class AuthService {
     final response = await http.post(
       Uri.parse('${AppConfig.trackingServerUrl}/trips'),
       headers: _authHeaders(token),
-      body: jsonEncode({'schedule_id': scheduleId}),
+      body: jsonEncode({
+        'schedule_id': scheduleId,
+        'trip_direction': tripDirection,
+      }),
     );
 
     final payload = _decodeJsonObject(response.body);

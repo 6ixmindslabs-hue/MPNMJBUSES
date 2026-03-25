@@ -146,6 +146,7 @@ const TripManager = () => {
         ) : trips.map((trip) => {
           const ui = getStatusUI(trip.status);
           const liveMeta = activeTripMeta[trip.id];
+          const tripDirection = (trip.trip_direction || 'outbound').toString().toUpperCase();
           
           return (
             <div key={trip.id} className="group bg-white rounded-[2.5rem] p-4 pr-10 border-2 border-slate-50 hover:border-indigo-100 shadow-premium transition-all flex flex-col lg:flex-row lg:items-center gap-8 relative overflow-hidden">
@@ -158,7 +159,7 @@ const TripManager = () => {
                      <Calendar size={32} strokeWidth={2.5} />
                   </div>
                   <div>
-                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-600">Daily Trip</p>
+                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-600">{tripDirection} LEG</p>
                      <p className="text-lg font-black text-slate-900 leading-tight mt-1">{format(new Date(trip.scheduled_start_time), 'hh:mm a')}</p>
                   </div>
                </div>
@@ -255,7 +256,7 @@ const TripManager = () => {
                     </div>
                     <div className="w-1 h-1 rounded-full bg-slate-300"></div>
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                       Daily Trip
+                       {(selectedTrip.trip_direction || 'outbound').toString().toUpperCase()} LEG
                     </div>
                  </div>
               </div>

@@ -25,6 +25,7 @@ const TRIP_START_EARLY_WINDOW_SECONDS = Number(
 const TRIP_START_LATE_WINDOW_SECONDS = Number(
   process.env.TRIP_START_LATE_WINDOW_SECONDS || 900
 );
+const TRIP_DIRECTIONS = ['outbound', 'return'];
 
 async function requireDriverAuth(req, res, next) {
   const auth = req.headers.authorization;
@@ -63,6 +64,33 @@ function normalizeRoute(route) {
   };
 }
 
+function normalizeTripDirection(value) {
+  return value === 'return' ? 'return' : 'outbound';
+}
+
+function getTripDirectionLabel(direction) {
+  return normalizeTripDirection(direction) === 'return' ? 'Return' : 'Outbound';
+}
+
+function normalizeRouteForDirection(route, direction) {
+  const normalized = normalizeRoute(route);
+  if (!normalized) return null;
+  if (normalizeTripDirection(direction) !== 'return') {
+    return normalized;
+  }
+
+  const reversedName =
+    [normalized.end_location, normalized.start_location].filter(Boolean).join(' -> ') ||
+    `${normalized.name} (Return)`;
+
+  return {
+    ...normalized,
+    name: reversedName,
+    start_location: normalized.end_location || normalized.start_location,
+    end_location: normalized.start_location || normalized.end_location,
+  };
+}
+
 function normalizeBus(bus) {
   if (!bus) return null;
 
@@ -82,6 +110,49 @@ function parseScheduleTimeToSeconds(timeValue) {
   if (!hours || !minutes) return null;
 
   return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
+}
+
+function getScheduleWindowForDirection(scheduleLike, direction) {
+  const normalizedDirection = normalizeTripDirection(direction);
+  if (normalizedDirection === 'return') {
+    return {
+      start_time: scheduleLike?.return_start_time || null,
+      end_time: scheduleLike?.return_end_time || scheduleLike?.return_start_time || null,
+    };
+  }
+
+  return {
+    start_time: scheduleLike?.outbound_start_time || scheduleLike?.start_time || null,
+    end_time: scheduleLike?.outbound_end_time || scheduleLike?.end_time || null,
+  };
+}
+
+function expandScheduleLegEntries(schedule) {
+  if (!schedule) return [];
+
+  const outboundWindow = getScheduleWindowForDirection(schedule, 'outbound');
+  const entries = [];
+
+  if (outboundWindow.start_time || outboundWindow.end_time) {
+    entries.push({
+      ...schedule,
+      trip_direction: 'outbound',
+      start_time: outboundWindow.start_time,
+      end_time: outboundWindow.end_time,
+    });
+  }
+
+  const returnWindow = getScheduleWindowForDirection(schedule, 'return');
+  if (returnWindow.start_time || returnWindow.end_time) {
+    entries.push({
+      ...schedule,
+      trip_direction: 'return',
+      start_time: returnWindow.start_time,
+      end_time: returnWindow.end_time,
+    });
+  }
+
+  return entries;
 }
 
 function getNowSecondsInTimezone() {
@@ -195,11 +266,21 @@ function pickBestScheduleForNow(schedules) {
   );
 }
 
+function pickBestScheduleLegForNow(schedules) {
+  const legs = (schedules || []).flatMap(expandScheduleLegEntries);
+  return pickBestEntryForNow(
+    legs,
+    (schedule) => schedule.start_time,
+    (schedule) => schedule.end_time
+  );
+}
+
 function normalizeDriverAssignment({
   id,
   schedule_id,
   status,
   schedule_type,
+  trip_direction = 'outbound',
   start_time,
   end_time,
   routes,
@@ -213,9 +294,11 @@ function normalizeDriverAssignment({
     schedule_id,
     status: status === 'started' ? 'running' : status,
     service_type: 'daily',
+    trip_direction: normalizeTripDirection(trip_direction),
+    direction_label: getTripDirectionLabel(trip_direction),
     start_time,
     end_time,
-    routes: normalizeRoute(routes),
+    routes: normalizeRouteForDirection(routes, trip_direction),
     buses: normalizeBus(buses),
     source,
     can_start_now,
@@ -233,7 +316,10 @@ function normalizeDriver(driver) {
 }
 
 function resolveTripRoute(trip) {
-  return normalizeRoute(trip?.trip_route || trip?.schedules?.routes);
+  return normalizeRouteForDirection(
+    trip?.trip_route || trip?.schedules?.routes,
+    trip?.trip_direction
+  );
 }
 
 function resolveTripBus(trip) {
@@ -242,6 +328,10 @@ function resolveTripBus(trip) {
 
 function resolveTripDriver(trip) {
   return normalizeDriver(trip?.drivers || trip?.schedules?.drivers);
+}
+
+function resolveTripDirection(trip) {
+  return normalizeTripDirection(trip?.trip_direction);
 }
 
 function hasScheduleEndedBeyondGrace(nowSeconds, startSeconds, endSeconds, graceSeconds) {
@@ -256,13 +346,23 @@ function hasScheduleEndedBeyondGrace(nowSeconds, startSeconds, endSeconds, grace
 }
 
 function canStartScheduleNow(schedule) {
-  const startSeconds = parseScheduleTimeToSeconds(schedule?.start_time);
-  const endSeconds = parseScheduleTimeToSeconds(schedule?.end_time);
+  const directionWindow = getScheduleWindowForDirection(
+    schedule,
+    schedule?.trip_direction
+  );
+  const startSeconds = parseScheduleTimeToSeconds(
+    directionWindow.start_time || schedule?.start_time
+  );
+  const endSeconds = parseScheduleTimeToSeconds(
+    directionWindow.end_time || schedule?.end_time
+  );
   return isWithinTripStartWindow(getNowSecondsInTimezone(), startSeconds, endSeconds);
 }
 
 function buildScheduleWindowMessage(schedule) {
-  return `The daily trip can only start near ${schedule?.start_time || 'its scheduled time'}.`;
+  const direction = normalizeTripDirection(schedule?.trip_direction);
+  const directionWindow = getScheduleWindowForDirection(schedule, direction);
+  return `The ${getTripDirectionLabel(direction).toLowerCase()} trip can only start near ${directionWindow.start_time || schedule?.start_time || 'its scheduled time'}.`;
 }
 
 function didTripStartOutsideScheduleWindow(trip, scheduleLike) {
@@ -274,9 +374,13 @@ function didTripStartOutsideScheduleWindow(trip, scheduleLike) {
 }
 
 function shouldHideActiveTrip(trip, latestTelemetry) {
+  const directionWindow = getScheduleWindowForDirection(
+    trip?.schedules || trip,
+    resolveTripDirection(trip)
+  );
   const scheduleLike = {
-    start_time: trip?.schedules?.start_time || trip?.start_time,
-    end_time: trip?.schedules?.end_time || trip?.end_time,
+    start_time: directionWindow.start_time || trip?.start_time,
+    end_time: directionWindow.end_time || trip?.end_time,
   };
   if (didTripStartOutsideScheduleWindow(trip, scheduleLike)) {
     return true;
@@ -325,11 +429,16 @@ function normalizeActiveTripForResponse(trip) {
   const route = resolveTripRoute(trip);
   const bus = resolveTripBus(trip);
   const driver = resolveTripDriver(trip);
+  const tripDirection = resolveTripDirection(trip);
+  const directionWindow = getScheduleWindowForDirection(trip?.schedules || trip, tripDirection);
   const schedule = trip?.schedules
     ? {
         ...trip.schedules,
+        trip_direction: tripDirection,
         schedule_type: 'daily',
-        routes: normalizeRoute(trip.schedules.routes),
+        start_time: directionWindow.start_time || trip.schedules.start_time,
+        end_time: directionWindow.end_time || trip.schedules.end_time,
+        routes: normalizeRouteForDirection(trip.schedules.routes, tripDirection),
         buses: normalizeBus(trip.schedules.buses) || bus,
         drivers: normalizeDriver(trip.schedules.drivers) || driver,
       }
@@ -337,6 +446,7 @@ function normalizeActiveTripForResponse(trip) {
 
   return {
     ...trip,
+    trip_direction: tripDirection,
     schedule_type: 'daily',
     route_id: trip?.route_id || route?.id || null,
     bus_id: trip?.bus_id || bus?.id || null,
@@ -497,30 +607,36 @@ async function fetchLatestTelemetryByTripIds(tripIds) {
   return map;
 }
 
-async function fetchStopsByRouteIds(trips) {
+async function fetchStopsByRouteDirections(trips) {
   const keyToStops = {};
-  const routeIds = new Set();
+  const routeDirectionKeys = new Set();
 
   for (const trip of trips || []) {
     const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
+    const tripDirection = resolveTripDirection(trip);
     if (!routeId) continue;
-    routeIds.add(routeId);
+    routeDirectionKeys.add(`${routeId}::${tripDirection}`);
   }
 
-  for (const routeId of routeIds) {
+  for (const routeDirectionKey of routeDirectionKeys) {
+    const [routeId, tripDirection] = routeDirectionKey.split('::');
     const { data, error } = await supabaseAdmin
       .from('stops')
-      .select('id, stop_name, latitude, longitude, arrival_time')
+      .select('id, stop_name, latitude, longitude, arrival_time, trip_direction')
       .eq('route_id', routeId)
+      .eq('trip_direction', tripDirection)
       .order('arrival_time', { ascending: true });
 
     if (error) {
-      console.error(`[API] Failed to fetch stops for route ${routeId}:`, error.message);
-      keyToStops[routeId] = [];
+      console.error(
+        `[API] Failed to fetch stops for route ${routeId}/${tripDirection}:`,
+        error.message
+      );
+      keyToStops[routeDirectionKey] = [];
       continue;
     }
 
-    keyToStops[routeId] = data || [];
+    keyToStops[routeDirectionKey] = data || [];
   }
 
   return keyToStops;
@@ -546,12 +662,17 @@ async function fetchTripLiveContext(tripId) {
       id,
       route_id,
       status,
+      trip_direction,
       schedule_id,
       trip_route:route_id (*),
       schedules:schedule_id (
         id,
         start_time,
         end_time,
+        outbound_start_time,
+        outbound_end_time,
+        return_start_time,
+        return_end_time,
         routes:route_id (*),
         buses:bus_id (id, bus_number, bus_name),
         drivers:driver_id (id, name, phone)
@@ -567,10 +688,12 @@ async function fetchTripLiveContext(tripId) {
   let stops = [];
 
   if (routeId) {
+    const tripDirection = resolveTripDirection(trip);
     const { data: stopData, error: stopError } = await supabaseAdmin
       .from('stops')
-      .select('id, stop_name, latitude, longitude, arrival_time')
+      .select('id, stop_name, latitude, longitude, arrival_time, trip_direction')
       .eq('route_id', routeId)
+      .eq('trip_direction', tripDirection)
       .order('arrival_time', { ascending: true });
 
     if (stopError) throw stopError;
@@ -593,7 +716,7 @@ async function buildTripLiveRouteResponse(tripId, options = {}) {
   const snapshot = await buildLiveRouteSnapshot({
     tripId,
     routeRecord: context.trip.trip_route || context.trip.schedules?.routes || {},
-    scheduleType: 'daily',
+    scheduleType: resolveTripDirection(context.trip),
     stops: context.stops,
     latestTelemetry: context.latestTelemetry,
     includeFullGeometry: options.includeFullGeometry === true,
@@ -603,6 +726,7 @@ async function buildTripLiveRouteResponse(tripId, options = {}) {
   return {
     trip_id: context.trip.id,
     trip_status: context.trip.status,
+    trip_direction: resolveTripDirection(context.trip),
     schedule_type: 'daily',
     ...snapshot,
   };
@@ -630,6 +754,7 @@ async function fetchCurrentDriverAssignment(driverId) {
       bus_id,
       driver_id,
       status,
+      trip_direction,
       started_at,
       trip_route:route_id (id, route_name, start_location, end_location),
       buses:bus_id (id, bus_number, bus_name, capacity),
@@ -638,6 +763,10 @@ async function fetchCurrentDriverAssignment(driverId) {
         id,
         start_time,
         end_time,
+        outbound_start_time,
+        outbound_end_time,
+        return_start_time,
+        return_end_time,
         routes:route_id (id, route_name, start_location, end_location),
         buses:bus_id (id, bus_number, bus_name, capacity)
       )
@@ -658,20 +787,34 @@ async function fetchCurrentDriverAssignment(driverId) {
 
   const activeTrip = pickBestEntryForNow(
     visibleActiveTrips,
-    (trip) => trip.schedules?.start_time,
-    (trip) => trip.schedules?.end_time
+    (trip) =>
+      getScheduleWindowForDirection(
+        trip.schedules || trip,
+        resolveTripDirection(trip)
+      ).start_time,
+    (trip) =>
+      getScheduleWindowForDirection(
+        trip.schedules || trip,
+        resolveTripDirection(trip)
+      ).end_time
   );
 
   if (activeTrip) {
     const route = resolveTripRoute(activeTrip);
     const bus = resolveTripBus(activeTrip);
+    const tripDirection = resolveTripDirection(activeTrip);
+    const directionWindow = getScheduleWindowForDirection(
+      activeTrip.schedules || activeTrip,
+      tripDirection
+    );
     return normalizeDriverAssignment({
       id: activeTrip.id,
       schedule_id: activeTrip.schedule_id,
       status: activeTrip.status,
       schedule_type: 'daily',
-      start_time: activeTrip.schedules?.start_time,
-      end_time: activeTrip.schedules?.end_time,
+      trip_direction: tripDirection,
+      start_time: directionWindow.start_time || activeTrip.schedules?.start_time,
+      end_time: directionWindow.end_time || activeTrip.schedules?.end_time,
       routes: route,
       buses: bus,
       source: 'trip',
@@ -685,29 +828,34 @@ async function fetchCurrentDriverAssignment(driverId) {
       id,
       start_time,
       end_time,
+      outbound_start_time,
+      outbound_end_time,
+      return_start_time,
+      return_end_time,
       routes:route_id (id, route_name, start_location, end_location),
       buses:bus_id (id, bus_number, bus_name, capacity)
     `)
     .eq('driver_id', driverId)
-    .order('start_time', { ascending: true });
+    .order('outbound_start_time', { ascending: true });
 
   if (scheduleErr) throw scheduleErr;
 
-  const schedule = pickBestScheduleForNow(schedules || []);
-  if (!schedule) return null;
+  const scheduleLeg = pickBestScheduleLegForNow(schedules || []);
+  if (!scheduleLeg) return null;
 
   return normalizeDriverAssignment({
-    id: schedule.id,
-    schedule_id: schedule.id,
+    id: scheduleLeg.id,
+    schedule_id: scheduleLeg.id,
     status: 'assigned',
     schedule_type: 'daily',
-    start_time: schedule.start_time,
-    end_time: schedule.end_time,
-    routes: schedule.routes,
-    buses: schedule.buses,
+    trip_direction: scheduleLeg.trip_direction,
+    start_time: scheduleLeg.start_time,
+    end_time: scheduleLeg.end_time,
+    routes: scheduleLeg.routes,
+    buses: scheduleLeg.buses,
     source: 'schedule',
-    can_start_now: canStartScheduleNow(schedule),
-    schedule_window_message: buildScheduleWindowMessage(schedule),
+    can_start_now: canStartScheduleNow(scheduleLeg),
+    schedule_window_message: buildScheduleWindowMessage(scheduleLeg),
   });
 }
 
@@ -721,6 +869,10 @@ async function fetchScheduleForTripStart(scheduleId) {
       driver_id,
       start_time,
       end_time,
+      outbound_start_time,
+      outbound_end_time,
+      return_start_time,
+      return_end_time,
       routes:route_id (id, route_name, start_location, end_location),
       buses:bus_id (id, bus_number, bus_name, capacity)
     `)
@@ -808,6 +960,7 @@ router.get('/stops', async (req, res) => {
       latitude,
       longitude,
       arrival_time,
+      trip_direction,
       schedule_type,
       routes:route_id (id, route_name, start_location, end_location)
     `)
@@ -817,7 +970,13 @@ router.get('/stops', async (req, res) => {
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  return res.json((data || []).map((stop) => ({ ...stop, schedule_type: 'daily' })));
+  return res.json(
+    (data || []).map((stop) => ({
+      ...stop,
+      trip_direction: normalizeTripDirection(stop.trip_direction),
+      schedule_type: 'daily',
+    }))
+  );
 });
 
 router.get('/buses', async (req, res) => {
@@ -841,6 +1000,10 @@ router.get('/schedules', async (req, res) => {
       schedule_type,
       start_time,
       end_time,
+      outbound_start_time,
+      outbound_end_time,
+      return_start_time,
+      return_end_time,
       route_id,
       bus_id,
       driver_id,
@@ -855,7 +1018,16 @@ router.get('/schedules', async (req, res) => {
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  return res.json((data || []).map((schedule) => ({ ...schedule, schedule_type: 'daily' })));
+  return res.json(
+    (data || []).map((schedule) => ({
+      ...schedule,
+      schedule_type: 'daily',
+      outbound_start_time: schedule.outbound_start_time || schedule.start_time,
+      outbound_end_time: schedule.outbound_end_time || schedule.end_time,
+      return_start_time: schedule.return_start_time,
+      return_end_time: schedule.return_end_time,
+    }))
+  );
 });
 
 router.post('/schedules/validate-assignment', async (req, res) => {
@@ -889,6 +1061,7 @@ router.post('/schedules/validate-assignment', async (req, res) => {
 });
 
 router.post('/trips', requireDriverAuth, async (req, res) => {
+  const requestedDirection = normalizeTripDirection(req.body?.trip_direction);
   const { schedule_id } = req.body || {};
   if (!schedule_id) {
     return res.status(400).json({ error: 'schedule_id is required' });
@@ -904,16 +1077,25 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       return res.status(403).json({ error: 'This schedule is not assigned to you' });
     }
 
-    if (!canStartScheduleNow(schedule)) {
+    const scheduleLeg = expandScheduleLegEntries(schedule).find(
+      (entry) => entry.trip_direction === requestedDirection
+    );
+    if (!scheduleLeg) {
+      return res.status(400).json({
+        error: `This daily schedule does not have a ${requestedDirection} leg configured.`,
+      });
+    }
+
+    if (!canStartScheduleNow(scheduleLeg)) {
       return res.status(409).json({
-        error: buildScheduleWindowMessage(schedule),
+        error: buildScheduleWindowMessage(scheduleLeg),
         code: 'SCHEDULE_NOT_STARTABLE_YET',
       });
     }
 
     const { data: existingTrips, error: existingTripsError } = await supabaseAdmin
       .from('trips')
-      .select('id, schedule_id, status, started_at')
+      .select('id, schedule_id, status, started_at, trip_direction')
       .eq('schedule_id', schedule.id)
       .in('status', ACTIVE_TRIP_STATUSES)
       .order('started_at', { ascending: false })
@@ -925,7 +1107,7 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
 
     const existingTrip = (existingTrips || [])[0];
     if (existingTrip) {
-      if (didTripStartOutsideScheduleWindow(existingTrip, schedule)) {
+      if (didTripStartOutsideScheduleWindow(existingTrip, scheduleLeg)) {
         const { error: invalidateError } = await supabaseAdmin
           .from('trips')
           .update({
@@ -937,8 +1119,13 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
         if (invalidateError) {
           throw invalidateError;
         }
-      } else {
+      } else if (normalizeTripDirection(existingTrip.trip_direction) === requestedDirection) {
         return res.json(existingTrip);
+      } else {
+        return res.status(409).json({
+          code: 'SCHEDULE_ALREADY_ACTIVE',
+          message: 'Another leg of this daily schedule is still active. End it before starting the next leg.',
+        });
       }
     }
 
@@ -965,6 +1152,7 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       route_id: schedule.route_id,
       bus_id: schedule.bus_id,
       driver_id: schedule.driver_id,
+      trip_direction: requestedDirection,
       schedule_type: 'daily',
       status: 'started',
       started_at: new Date().toISOString(),
@@ -979,6 +1167,7 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
         id,
         schedule_id,
         status,
+        trip_direction,
         schedule_type,
         started_at,
         route_id,
@@ -1038,6 +1227,7 @@ router.get('/trips/active', async (req, res) => {
         bus_id,
         driver_id,
         status,
+        trip_direction,
         schedule_type,
         started_at,
         paused_at,
@@ -1049,6 +1239,10 @@ router.get('/trips/active', async (req, res) => {
           id,
           start_time,
           end_time,
+          outbound_start_time,
+          outbound_end_time,
+          return_start_time,
+          return_end_time,
           schedule_type,
           routes:route_id (*),
           buses:bus_id (id, bus_number, bus_name),
@@ -1068,19 +1262,21 @@ router.get('/trips/active', async (req, res) => {
     const visibleTrips = trips.filter(
       (trip) => !shouldHideActiveTrip(trip, telemetryMap[trip.id] || null)
     );
-    const stopsMap = await fetchStopsByRouteIds(visibleTrips);
+    const stopsMap = await fetchStopsByRouteDirections(visibleTrips);
 
     const enriched = await Promise.all(
       visibleTrips.map(async (trip) => {
         const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
-        const stopKey = routeId || '';
+        const stopKey = routeId
+            ? `${routeId}::${resolveTripDirection(trip)}`
+            : '';
         const latestTelemetry = telemetryMap[trip.id] || null;
 
         try {
           const snapshot = await buildLiveRouteSnapshot({
             tripId: trip.id,
             routeRecord: trip.trip_route || trip.schedules?.routes || {},
-            scheduleType: 'daily',
+            scheduleType: resolveTripDirection(trip),
             stops: stopsMap[stopKey] || [],
             latestTelemetry,
             includeFullGeometry: false,

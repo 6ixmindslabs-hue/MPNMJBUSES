@@ -35,6 +35,7 @@ export interface Stop {
   latitude: number;
   longitude: number;
   arrival_time: string;
+  trip_direction?: 'outbound' | 'return';
   schedule_type?: 'daily';
   created_at?: string;
 }
@@ -45,7 +46,11 @@ export interface Schedule {
   bus_id: string;
   driver_id: string;
   schedule_type?: 'daily';
-  start_time: string;
-  end_time: string;
+  start_time?: string;
+  end_time?: string;
+  outbound_start_time: string;
+  outbound_end_time: string;
+  return_start_time: string;
+  return_end_time: string;
   created_at?: string;
 }

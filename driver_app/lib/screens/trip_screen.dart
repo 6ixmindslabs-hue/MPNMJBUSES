@@ -123,6 +123,7 @@ class _TripScreenState extends State<TripScreen> {
       if ((_trip!['source'] ?? 'schedule') == 'schedule') {
         final startedTrip = await AuthService.startAssignedTrip(
           _trip!['schedule_id'].toString(),
+          (_trip!['trip_direction'] ?? 'outbound').toString(),
         );
 
         _trip = {
@@ -251,8 +252,8 @@ class _TripScreenState extends State<TripScreen> {
 
       if (!mounted) return;
 
-      setState(() => _tripStatus = 'completed');
       _showSnackbar('Tracking ended.', Colors.blue.shade700);
+      await _loadTrip();
     } on DriverAuthException catch (error) {
       if (!mounted) return;
       _showError(error.message);
@@ -293,6 +294,12 @@ class _TripScreenState extends State<TripScreen> {
       default:
         return 'assigned';
     }
+  }
+
+  String _tripDirectionLabel() {
+    return (_trip?['trip_direction'] ?? 'outbound') == 'return'
+        ? 'RETURN LEG'
+        : 'OUTBOUND LEG';
   }
 
   void _showError(String message) {
@@ -472,7 +479,7 @@ class _TripScreenState extends State<TripScreen> {
                       ),
                     ),
                     Text(
-                      'ASSIGNED TRIP',
+                      _tripDirectionLabel(),
                       style: const TextStyle(
                         color: Color(0xFF64748B),
                         fontSize: 11,

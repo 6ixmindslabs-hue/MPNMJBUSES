@@ -8,10 +8,12 @@ import 'live_tracking_screen.dart';
 class BusAvailabilityScreen extends StatefulWidget {
   final Map<String, dynamic> fromStop;
   final Map<String, dynamic> toStop;
+  final String direction;
 
   const BusAvailabilityScreen({
     required this.fromStop,
     required this.toStop,
+    required this.direction,
     super.key,
   });
 
@@ -53,7 +55,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         activeData
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
-            .where(_matchesRouteAndShift)
+            .where(_matchesRouteAndDirection)
             .map(_normalizeActiveTrip)
             .where(_hasRenderableBus)
             .toList(),
@@ -71,7 +73,12 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         final scheduledTrips = scheduleData
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
-            .where(_matchesRouteAndShift)
+            .where(_matchesRouteAndDirection)
+            .where(
+              (schedule) =>
+                  _directionalStartTime(schedule)?.isNotEmpty == true &&
+                  _directionalEndTime(schedule)?.isNotEmpty == true,
+            )
             .map(_normalizeScheduledTrip)
             .toList();
 
@@ -116,7 +123,36 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     return (widget.toStop['route_id'] ?? '').toString().trim();
   }
 
-  bool _matchesRouteAndShift(Map<String, dynamic> item) {
+  String _tripDirectionOf(Map<String, dynamic> item) {
+    final schedule = Map<String, dynamic>.from(item['schedules'] ?? const {});
+    final direction = (item['trip_direction'] ??
+            schedule['trip_direction'] ??
+            widget.direction)
+        .toString();
+    return direction == 'return' ? 'return' : 'outbound';
+  }
+
+  String _directionLabel(String direction) {
+    return direction == 'return' ? 'Return' : 'Outbound';
+  }
+
+  String? _directionalStartTime(Map<String, dynamic> schedule) {
+    if (widget.direction == 'return') {
+      return schedule['return_start_time']?.toString();
+    }
+    return (schedule['outbound_start_time'] ?? schedule['start_time'])
+        ?.toString();
+  }
+
+  String? _directionalEndTime(Map<String, dynamic> schedule) {
+    if (widget.direction == 'return') {
+      return (schedule['return_end_time'] ?? schedule['return_start_time'])
+          ?.toString();
+    }
+    return (schedule['outbound_end_time'] ?? schedule['end_time'])?.toString();
+  }
+
+  bool _matchesRouteAndDirection(Map<String, dynamic> item) {
     final selectedRouteId =
         (widget.fromStop['route_id'] ?? '').toString().trim();
     final destinationRouteId =
@@ -134,7 +170,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         : itemRouteId == selectedRouteId &&
             (destinationRouteId.isEmpty || itemRouteId == destinationRouteId);
 
-    return routeMatches;
+    return routeMatches && _tripDirectionOf(item) == widget.direction;
   }
 
   Map<String, dynamic> _normalizeActiveTrip(Map<String, dynamic> trip) {
@@ -154,11 +190,13 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       'route_id': trip['route_id'] ?? route['id'],
       'schedule_id': trip['schedule_id'] ?? schedule['id'],
       'bus_id': trip['bus_id'] ?? bus['id'] ?? schedule['buses']?['id'],
+      'trip_direction': _tripDirectionOf(trip),
       'source_type': 'trip',
       'is_trackable': true,
       'schedules': {
         ...schedule,
         'id': trip['schedule_id'] ?? schedule['id'],
+        'trip_direction': _tripDirectionOf(trip),
         'schedule_type': 'daily',
         'routes': route,
         'buses': bus,
@@ -168,11 +206,15 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
   }
 
   Map<String, dynamic> _normalizeScheduledTrip(Map<String, dynamic> schedule) {
+    final startTime = _directionalStartTime(schedule);
+    final endTime = _directionalEndTime(schedule);
+
     return {
       'id': 'schedule-${schedule['id']}',
       'route_id': schedule['route_id'],
       'schedule_id': schedule['id'],
       'bus_id': schedule['bus_id'],
+      'trip_direction': widget.direction,
       'schedule_type': 'daily',
       'status': 'scheduled',
       'started_at': null,
@@ -181,8 +223,9 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       'trip_route': null,
       'schedules': {
         'id': schedule['id'],
-        'start_time': schedule['start_time'],
-        'end_time': schedule['end_time'],
+        'trip_direction': widget.direction,
+        'start_time': startTime,
+        'end_time': endTime,
         'schedule_type': 'daily',
         'routes': schedule['routes'],
         'buses': schedule['buses'],
@@ -433,6 +476,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     final isTrackable = trip['is_trackable'] == true;
     final isOnline = trip['is_online'] == true;
     final isScheduledOnly = trip['source_type'] == 'schedule';
+    final tripDirection = _directionLabel(_tripDirectionOf(trip));
     final statusLabel =
         isScheduledOnly ? 'SCHEDULED' : (isOnline ? 'ONLINE' : 'OFFLINE');
     final statusColor = isScheduledOnly
@@ -522,6 +566,16 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                     color: Color(0xFF94A3B8), fontSize: 13, height: 1.4),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tripDirection,
+                style: const TextStyle(
+                  color: Color(0xFF94A3B8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
               ),
               const SizedBox(height: 20),
               const Divider(color: Color(0xFFE2E8F0)),

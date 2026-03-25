@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS public.stops (
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     arrival_time TIME NOT NULL,
+    trip_direction TEXT NOT NULL DEFAULT 'outbound', -- outbound | return
     schedule_type TEXT NOT NULL DEFAULT 'daily', -- daily service marker
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
@@ -58,6 +59,10 @@ CREATE TABLE IF NOT EXISTS public.schedules (
     schedule_type TEXT NOT NULL DEFAULT 'daily',  -- daily service marker
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
+    outbound_start_time TIME NOT NULL,
+    outbound_end_time TIME NOT NULL,
+    return_start_time TIME,
+    return_end_time TIME,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
@@ -69,6 +74,7 @@ CREATE TABLE IF NOT EXISTS public.trips (
     driver_id UUID REFERENCES public.drivers(id) ON DELETE SET NULL,
     bus_id UUID REFERENCES public.buses(id) ON DELETE SET NULL,
     route_id UUID REFERENCES public.routes(id) ON DELETE SET NULL,
+    trip_direction TEXT NOT NULL DEFAULT 'outbound', -- outbound | return
     schedule_type TEXT DEFAULT 'daily',  -- copied from schedule for compatibility
     status TEXT NOT NULL DEFAULT 'started', -- 'started' | 'running' | 'paused' | 'completed' | 'cancelled'
     started_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()),
@@ -98,14 +104,29 @@ CREATE TABLE IF NOT EXISTS public.telemetry (
 
 -- Add schedule_type to stops (if upgrading from old schema)
 ALTER TABLE public.stops ADD COLUMN IF NOT EXISTS schedule_type TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE public.stops ADD COLUMN IF NOT EXISTS trip_direction TEXT NOT NULL DEFAULT 'outbound';
 ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS schedule_type TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS outbound_start_time TIME;
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS outbound_end_time TIME;
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS return_start_time TIME;
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS return_end_time TIME;
 ALTER TABLE public.trips ADD COLUMN IF NOT EXISTS schedule_type TEXT DEFAULT 'daily';
+ALTER TABLE public.trips ADD COLUMN IF NOT EXISTS trip_direction TEXT NOT NULL DEFAULT 'outbound';
 ALTER TABLE public.stops ALTER COLUMN schedule_type SET DEFAULT 'daily';
+ALTER TABLE public.stops ALTER COLUMN trip_direction SET DEFAULT 'outbound';
 ALTER TABLE public.schedules ALTER COLUMN schedule_type SET DEFAULT 'daily';
 ALTER TABLE public.trips ALTER COLUMN schedule_type SET DEFAULT 'daily';
+ALTER TABLE public.trips ALTER COLUMN trip_direction SET DEFAULT 'outbound';
 UPDATE public.stops SET schedule_type = 'daily' WHERE schedule_type IS DISTINCT FROM 'daily';
+UPDATE public.stops SET trip_direction = 'outbound' WHERE trip_direction IS DISTINCT FROM 'return';
 UPDATE public.schedules SET schedule_type = 'daily' WHERE schedule_type IS DISTINCT FROM 'daily';
+UPDATE public.schedules
+SET outbound_start_time = COALESCE(outbound_start_time, start_time),
+    outbound_end_time = COALESCE(outbound_end_time, end_time);
 UPDATE public.trips SET schedule_type = 'daily' WHERE schedule_type IS DISTINCT FROM 'daily';
+UPDATE public.trips SET trip_direction = 'outbound' WHERE trip_direction IS DISTINCT FROM 'return';
+ALTER TABLE public.schedules ALTER COLUMN outbound_start_time SET NOT NULL;
+ALTER TABLE public.schedules ALTER COLUMN outbound_end_time SET NOT NULL;
 
 DELETE FROM public.schedules s
 WHERE s.id IN (
@@ -237,10 +258,12 @@ END $$;
 -- PERFORMANCE — Indexes for common query patterns
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_stops_route_id ON public.stops(route_id);
+CREATE INDEX IF NOT EXISTS idx_stops_trip_direction ON public.stops(trip_direction);
 CREATE INDEX IF NOT EXISTS idx_stops_schedule_type ON public.stops(schedule_type);
 CREATE INDEX IF NOT EXISTS idx_schedules_driver_id ON public.schedules(driver_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_route_id ON public.schedules(route_id);
 CREATE INDEX IF NOT EXISTS idx_trips_status ON public.trips(status);
+CREATE INDEX IF NOT EXISTS idx_trips_trip_direction ON public.trips(trip_direction);
 CREATE INDEX IF NOT EXISTS idx_trips_schedule_id ON public.trips(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_trip_id ON public.telemetry(trip_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON public.telemetry(timestamp DESC);

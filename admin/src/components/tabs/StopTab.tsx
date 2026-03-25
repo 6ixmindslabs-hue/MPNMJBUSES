@@ -20,6 +20,8 @@ const routeIcon = L.divIcon({
   iconAnchor: [11, 11],
 });
 type GeometryTarget = { route_id: string };
+const DIRECTIONS = ['outbound', 'return'] as const;
+type TripDirection = (typeof DIRECTIONS)[number];
 
 // ── Component ────────────────────────────────────────────
 const StopTab = () => {
@@ -29,10 +31,11 @@ const StopTab = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [activeDirection, setActiveDirection] = useState<TripDirection>('outbound');
 
   const addToast = useStore((state) => state.addToast);
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<Stop>({
-    defaultValues: { schedule_type: 'daily' }
+    defaultValues: { schedule_type: 'daily', trip_direction: 'outbound' }
   });
 
   const selectedRouteId = watch('route_id');
@@ -61,7 +64,9 @@ const StopTab = () => {
     setLoading(false);
   };
 
-  const filteredStops = allStops;
+  const filteredStops = allStops.filter(
+    (stop) => (stop.trip_direction || 'outbound') === activeDirection
+  );
 
   const rebuildGeometryTargets = async (targets: GeometryTarget[]) => {
     const uniqueTargets = targets.filter((target, index, list) =>
@@ -96,7 +101,11 @@ const StopTab = () => {
   const onSubmit = async (data: any) => {
     setIsSaving(true);
     const { id, created_at, routes: _r, ...rest } = data;
-    const clean = { ...rest, schedule_type: 'daily' };
+    const clean = {
+      ...rest,
+      trip_direction: activeDirection,
+      schedule_type: 'daily'
+    };
     const originalStop = editingId
       ? allStops.find((stop) => stop.id === editingId)
       : null;
@@ -132,7 +141,15 @@ const StopTab = () => {
         addToast(geometryErr.message || 'Stop saved, but geometry refresh failed.', 'error');
       }
 
-      reset({ route_id: data.route_id, stop_name: '', latitude: null as any, longitude: null as any, arrival_time: '', schedule_type: 'daily' });
+      reset({
+        route_id: data.route_id,
+        stop_name: '',
+        latitude: null as any,
+        longitude: null as any,
+        arrival_time: '',
+        trip_direction: activeDirection,
+        schedule_type: 'daily'
+      });
       fetchStops(data.route_id);
     } catch (err: any) {
       addToast(err.message || 'Action failed', 'error');
@@ -143,6 +160,7 @@ const StopTab = () => {
 
   const handleEdit = (stop: any) => {
     setEditingId(stop.id!);
+    setActiveDirection((stop.trip_direction || 'outbound') as TripDirection);
     reset(stop);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -209,12 +227,30 @@ const StopTab = () => {
               </select>
             </div>
 
-            {/* Daily Service */}
+            {/* Direction */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm text-gray-600 font-medium">Service Type</label>
-              <div className="bg-gray-50 border border-gray-200 rounded-lg h-[52px] flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest text-gray-700">
-                <Calendar size={16} />
-                One Daily Route Plan
+              <label className="text-sm text-gray-600 font-medium">Direction</label>
+              <div className="grid grid-cols-2 gap-2">
+                {DIRECTIONS.map((direction) => {
+                  const active = direction === activeDirection;
+                  return (
+                    <button
+                      key={direction}
+                      type="button"
+                      onClick={() => {
+                        setActiveDirection(direction);
+                        setValue('trip_direction', direction, { shouldDirty: true });
+                      }}
+                      className={`rounded-lg border px-4 py-3 text-xs font-black uppercase tracking-widest transition-colors ${
+                        active
+                          ? 'border-amber-300 bg-amber-50 text-amber-700'
+                          : 'border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >
+                      {direction}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -301,8 +337,8 @@ const StopTab = () => {
                 icon={routeIcon}
               />
             )}
-            {/* All stored stops */}
-            {allStops.map(s => (
+            {/* Stops for current direction */}
+            {filteredStops.map(s => (
               <Marker
                 key={s.id}
                 position={[s.latitude, s.longitude]}
@@ -319,7 +355,9 @@ const StopTab = () => {
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
                 <div className="w-3.5 h-3.5 rounded-full bg-amber-400 border-2 border-amber-700 shrink-0"></div>
-                <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Route Stop</span>
+                <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
+                  {activeDirection} stop
+                </span>
               </div>
             </div>
           </div>
@@ -333,7 +371,7 @@ const StopTab = () => {
             Checkpoint Assignment Log
           </h3>
           <span className="text-[10px] font-bold text-gray-500 uppercase bg-gray-100 px-2 py-1 rounded">
-            Total: {allStops.length} nodes
+            {activeDirection}: {filteredStops.length} nodes
           </span>
         </div>
 
@@ -364,7 +402,7 @@ const StopTab = () => {
                     <div className="flex flex-col items-center gap-3">
                       <Calendar size={32} strokeWidth={1.5} className="text-amber-200" />
                       <span className="text-sm italic">
-                        No checkpoints defined for this corridor.
+                        No checkpoints defined for this {activeDirection} direction.
                       </span>
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                         Add one using the form above ↑
@@ -414,7 +452,7 @@ const StopTab = () => {
         {!loading && filteredStops.length > 0 && (
           <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
             <span className="text-xs text-gray-500 font-medium">
-              Showing {filteredStops.length} route stops
+              Showing {filteredStops.length} {activeDirection} stops
             </span>
             <div className="flex items-center gap-1">
               <button disabled className="p-1 rounded hover:bg-gray-100 disabled:opacity-30"><ChevronLeft size={16} /></button>
