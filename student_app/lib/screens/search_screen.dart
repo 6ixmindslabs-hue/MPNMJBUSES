@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -215,7 +215,29 @@ class _SearchScreenState extends State<SearchScreen> {
                 children: [
                   Row(
                     children: [
-                      ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.asset("assets/images/app_icon.png", width: 44, height: 44)),
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFFACC15), Color(0xFFF59E0B), Color(0xFFEA580C)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: const Center(
+                          child: Icon(LucideIcons.bus, color: Colors.white, size: 22),
+                        ),
+                      ),
                       const Spacer(),
                       IconButton(
                         onPressed: _loading ? null : _fetchStops,

@@ -14,6 +14,10 @@ class GpsTrackingService {
 
   bool get isTracking => _isTracking;
 
+  Future<bool> isServiceRunning() async {
+    return _isTracking;
+  }
+
   static Future<void> initForegroundTask() async {
     // No-op on Web
   }

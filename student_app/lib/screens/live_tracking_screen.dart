@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_spinkit/flutter_spinkit.dart';
 import '../config/constants.dart';
 
 class LiveTrackingScreen extends StatefulWidget {
@@ -1742,7 +1743,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ),
             ],
           ),
-          child: ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.asset("assets/images/app_icon.png", width: 18, height: 18)),
+          child: const Center(
+            child: Icon(
+              LucideIcons.bus,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
         ),
       ),
     );
@@ -2302,12 +2309,38 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         alignment: Alignment.center,
         clipBehavior: Clip.none,
         children: [
-          Container(
-            width: 70,
-            height: 70,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF59E0B).withValues(alpha: 0.14),
-              shape: BoxShape.circle,
+          const SpinKitRipple(
+            color: Color(0xFFF59E0B),
+            size: 104.0,
+          ),
+          Transform.rotate(
+            angle: heading,
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                  width: 2,
+                ),
+              ),
+              alignment: Alignment.topCenter,
+              child: Container(
+                margin: const EdgeInsets.only(top: 2),
+                width: 4,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEA580C),
+                  borderRadius: BorderRadius.circular(2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFEA580C).withValues(alpha: 0.5),
+                      blurRadius: 4,
+                    )
+                  ],
+                ),
+              ),
             ),
           ),
           Container(
@@ -2333,19 +2366,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               ],
               border: Border.all(color: Colors.white, width: 3),
             ),
-            child: Transform.rotate(
-              angle: heading,
-              child: ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.asset("assets/images/app_icon.png", width: 24, height: 24)),
-            ),
-          ),
-          Positioned(
-            top: 10,
-            child: Container(
-              width: 2,
-              height: 18,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E293B).withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(99),
+            child: const Center(
+              child: Icon(
+                LucideIcons.bus,
+                color: Colors.white,
+                size: 20,
               ),
             ),
           ),

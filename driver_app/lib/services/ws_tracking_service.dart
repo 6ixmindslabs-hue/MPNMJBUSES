@@ -223,6 +223,22 @@ class WsTrackingService {
     }
   }
 
+  Future<String?> getPersistedTripId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final raw = prefs.getString(_trackingSessionKey);
+    if (raw == null || raw.isEmpty) return null;
+
+    try {
+      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final tripId = decoded['tripId']?.toString();
+      if (tripId == null || tripId.isEmpty) return null;
+      return tripId;
+    } catch (_) {
+      return null;
+    }
+  }
+
   void disconnect() {
     _allowReconnect = false;
     _reconnectTimer?.cancel();

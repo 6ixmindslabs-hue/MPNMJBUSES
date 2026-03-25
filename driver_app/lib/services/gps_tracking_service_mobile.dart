@@ -101,6 +101,10 @@ class GpsTrackingService {
 
   bool get isTracking => _isTracking;
 
+  Future<bool> isServiceRunning() {
+    return FlutterForegroundTask.isRunningService;
+  }
+
   /// Initialize foreground task notification (for background tracking)
   static Future<void> initForegroundTask() async {
     if (kIsWeb) return;

@@ -91,10 +91,7 @@ class _TripScreenState extends State<TripScreen> {
     final wsToken = await AuthService.getWsToken();
     if (wsToken == null) return;
 
-    await _wsService.persistTrackingSession(
-      wsToken: wsToken,
-      tripId: _trip!['id'].toString(),
-    );
+    await _ensureTrackingBoundToCurrentTrip(wsToken);
 
     final started = await _gpsService.startTracking();
     if (!started) return;
@@ -135,10 +132,7 @@ class _TripScreenState extends State<TripScreen> {
         };
       }
 
-      await _wsService.persistTrackingSession(
-        wsToken: wsToken,
-        tripId: _trip!['id'].toString(),
-      );
+      await _ensureTrackingBoundToCurrentTrip(wsToken);
 
       final trackingStarted = await _gpsService.startTracking();
       if (!trackingStarted) {
@@ -179,6 +173,29 @@ class _TripScreenState extends State<TripScreen> {
         setState(() => _submitting = false);
       }
     }
+  }
+
+  Future<void> _ensureTrackingBoundToCurrentTrip(String wsToken) async {
+    if (_trip == null) return;
+
+    final currentTripId = _trip!['id'].toString();
+    final persistedTripId = await _wsService.getPersistedTripId();
+    final serviceRunning = await _gpsService.isServiceRunning();
+    final shouldSwitchTrip =
+        serviceRunning &&
+        persistedTripId != null &&
+        persistedTripId.isNotEmpty &&
+        persistedTripId != currentTripId;
+
+    if (shouldSwitchTrip) {
+      await _gpsService.stopTracking();
+      _wsService.disconnect();
+    }
+
+    await _wsService.persistTrackingSession(
+      wsToken: wsToken,
+      tripId: currentTripId,
+    );
   }
 
   Future<void> _endTracking() async {

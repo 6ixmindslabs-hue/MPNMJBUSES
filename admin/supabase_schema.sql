@@ -168,77 +168,34 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_trip_id ON public.telemetry(trip_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON public.telemetry(timestamp DESC);
 
 -- ============================================================
--- CONCURRENCY-SAFE ACTIVE TRIP GUARDS
--- Enforces: 1 driver + 1 bus = 1 active trip at a time
+-- CONCURRENCY-SAFE SHIFT GUARDS
+-- Enforces:
+-- 1. A driver/bus can have one schedule per shift.
+-- 2. A driver/bus can have one active trip per shift.
+-- 3. The same schedule cannot be started twice concurrently.
 -- ============================================================
 
--- Partial unique indexes prevent duplicate active trips under race conditions.
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_driver
-ON public.trips(driver_id)
-WHERE status IN ('started', 'running', 'paused');
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_schedule_driver_per_shift
+ON public.schedules(driver_id, schedule_type)
+WHERE driver_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_bus
-ON public.trips(bus_id)
-WHERE status IN ('started', 'running', 'paused');
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_schedule_bus_per_shift
+ON public.schedules(bus_id, schedule_type)
+WHERE bus_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_driver_shift
+ON public.trips(driver_id, schedule_type)
+WHERE status IN ('started', 'running', 'paused')
+  AND driver_id IS NOT NULL
+  AND schedule_type IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_bus_shift
+ON public.trips(bus_id, schedule_type)
+WHERE status IN ('started', 'running', 'paused')
+  AND bus_id IS NOT NULL
+  AND schedule_type IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_schedule
 ON public.trips(schedule_id)
-WHERE status IN ('started', 'running', 'paused');
-
--- Prevent creating/updating schedules for a driver/bus that is already in an active trip.
-CREATE OR REPLACE FUNCTION public.prevent_schedule_conflict_with_active_trip()
-RETURNS trigger AS $$
-BEGIN
-  IF TG_OP = 'UPDATE' THEN
-    IF EXISTS (
-      SELECT 1
-      FROM public.trips t
-      WHERE t.driver_id = NEW.driver_id
-        AND t.schedule_id IS DISTINCT FROM OLD.id
-        AND t.status IN ('started', 'running', 'paused')
-        AND t.schedule_type = NEW.schedule_type
-    ) THEN
-      RAISE EXCEPTION 'Selected driver already has an active trip in this shift.';
-    END IF;
-
-    IF EXISTS (
-      SELECT 1
-      FROM public.trips t
-      WHERE t.bus_id = NEW.bus_id
-        AND t.schedule_id IS DISTINCT FROM OLD.id
-        AND t.status IN ('started', 'running', 'paused')
-        AND t.schedule_type = NEW.schedule_type
-    ) THEN
-      RAISE EXCEPTION 'Selected bus already has an active trip in this shift.';
-    END IF;
-  ELSE
-    IF EXISTS (
-      SELECT 1
-      FROM public.trips t
-      WHERE t.driver_id = NEW.driver_id
-        AND t.status IN ('started', 'running', 'paused')
-        AND t.schedule_type = NEW.schedule_type
-    ) THEN
-      RAISE EXCEPTION 'Selected driver already has an active trip in this shift.';
-    END IF;
-
-    IF EXISTS (
-      SELECT 1
-      FROM public.trips t
-      WHERE t.bus_id = NEW.bus_id
-        AND t.status IN ('started', 'running', 'paused')
-        AND t.schedule_type = NEW.schedule_type
-    ) THEN
-      RAISE EXCEPTION 'Selected bus already has an active trip in this shift.';
-    END IF;
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_prevent_schedule_conflict ON public.schedules;
-CREATE TRIGGER trg_prevent_schedule_conflict
-BEFORE INSERT OR UPDATE ON public.schedules
-FOR EACH ROW
-EXECUTE FUNCTION public.prevent_schedule_conflict_with_active_trip();
+WHERE status IN ('started', 'running', 'paused')
+  AND schedule_id IS NOT NULL;

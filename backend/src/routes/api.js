@@ -15,6 +15,8 @@ const { buildLiveTripMeta } = require('../services/tripLiveService');
 const { buildLiveRouteSnapshot } = require('../services/liveRouteService');
 const { rebuildRouteGeometryForRoute } = require('../services/routeGeometryService');
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+
 async function requireDriverAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
@@ -63,62 +65,102 @@ function normalizeBus(bus) {
   };
 }
 
-function parseScheduleTimeForToday(timeValue) {
+function parseScheduleTimeToSeconds(timeValue) {
   if (!timeValue || typeof timeValue !== 'string') return null;
 
   const [hours, minutes, seconds = '00'] = timeValue.split(':');
   if (!hours || !minutes) return null;
 
-  const now = new Date();
-  return new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    Number(hours),
-    Number(minutes),
-    Number(seconds),
-    0
+  return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
+}
+
+function getNowSecondsInTimezone() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TIMEZONE,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date());
+
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  );
+
+  return (
+    Number(values.hour || '0') * 3600 +
+    Number(values.minute || '0') * 60 +
+    Number(values.second || '0')
   );
 }
 
-function pickBestScheduleForNow(schedules) {
-  if (!Array.isArray(schedules) || schedules.length === 0) return null;
+function isWithinScheduleWindow(nowSeconds, startSeconds, endSeconds) {
+  if (startSeconds == null || endSeconds == null) return false;
 
-  const now = new Date();
-  const enriched = schedules.map((schedule) => {
-    const start = parseScheduleTimeForToday(schedule.start_time);
-    const end = parseScheduleTimeForToday(schedule.end_time);
-    const isActive = start && end ? now >= start && now <= end : false;
-    const upcomingGapMs = start
-      ? start.getTime() - now.getTime()
-      : Number.POSITIVE_INFINITY;
-    const elapsedGapMs = start
-      ? now.getTime() - start.getTime()
-      : Number.POSITIVE_INFINITY;
+  if (endSeconds >= startSeconds) {
+    return nowSeconds >= startSeconds && nowSeconds <= endSeconds;
+  }
+
+  return nowSeconds >= startSeconds || nowSeconds <= endSeconds;
+}
+
+function secondsUntilNextStart(nowSeconds, startSeconds) {
+  if (startSeconds == null) return Number.POSITIVE_INFINITY;
+  return startSeconds >= nowSeconds
+    ? startSeconds - nowSeconds
+    : 86400 - nowSeconds + startSeconds;
+}
+
+function secondsSinceStart(nowSeconds, startSeconds) {
+  if (startSeconds == null) return Number.POSITIVE_INFINITY;
+  return nowSeconds >= startSeconds
+    ? nowSeconds - startSeconds
+    : 86400 - startSeconds + nowSeconds;
+}
+
+function pickBestEntryForNow(entries, getStartTime, getEndTime) {
+  if (!Array.isArray(entries) || entries.length === 0) return null;
+
+  const nowSeconds = getNowSecondsInTimezone();
+  const enriched = entries.map((entry) => {
+    const startSeconds = parseScheduleTimeToSeconds(getStartTime(entry));
+    const endSeconds = parseScheduleTimeToSeconds(getEndTime(entry));
+    const isActive = isWithinScheduleWindow(nowSeconds, startSeconds, endSeconds);
+    const upcomingGapSeconds = secondsUntilNextStart(nowSeconds, startSeconds);
+    const elapsedGapSeconds = secondsSinceStart(nowSeconds, startSeconds);
 
     return {
-      schedule,
+      entry,
       isActive,
-      upcomingGapMs,
-      elapsedGapMs,
+      upcomingGapSeconds,
+      elapsedGapSeconds,
     };
   });
 
   const activeSchedule = enriched
     .filter((entry) => entry.isActive)
-    .sort((a, b) => a.upcomingGapMs - b.upcomingGapMs)[0];
+    .sort((a, b) => a.elapsedGapSeconds - b.elapsedGapSeconds)[0];
   if (activeSchedule) {
-    return activeSchedule.schedule;
+    return activeSchedule.entry;
   }
 
   const nextUpcoming = enriched
-    .filter((entry) => entry.upcomingGapMs >= 0)
-    .sort((a, b) => a.upcomingGapMs - b.upcomingGapMs)[0];
+    .sort((a, b) => a.upcomingGapSeconds - b.upcomingGapSeconds)[0];
   if (nextUpcoming) {
-    return nextUpcoming.schedule;
+    return nextUpcoming.entry;
   }
 
-  return enriched.sort((a, b) => a.elapsedGapMs - b.elapsedGapMs)[0]?.schedule || null;
+  return enriched.sort((a, b) => a.elapsedGapSeconds - b.elapsedGapSeconds)[0]?.entry || null;
+}
+
+function pickBestScheduleForNow(schedules) {
+  return pickBestEntryForNow(
+    schedules,
+    (schedule) => schedule.start_time,
+    (schedule) => schedule.end_time
+  );
 }
 
 function normalizeDriverAssignment({
@@ -143,6 +185,136 @@ function normalizeDriverAssignment({
     buses: normalizeBus(buses),
     source,
   };
+}
+
+async function findScheduleAssignmentConflicts({
+  driverId,
+  busId,
+  scheduleType,
+  excludeScheduleId,
+}) {
+  if (!scheduleType || (!driverId && !busId)) return [];
+
+  let query = supabaseAdmin
+    .from('schedules')
+    .select('id, driver_id, bus_id, schedule_type')
+    .eq('schedule_type', scheduleType)
+    .limit(20);
+
+  if (excludeScheduleId) {
+    query = query.neq('id', excludeScheduleId);
+  }
+
+  if (driverId && busId) {
+    query = query.or(`driver_id.eq.${driverId},bus_id.eq.${busId}`);
+  } else if (driverId) {
+    query = query.eq('driver_id', driverId);
+  } else if (busId) {
+    query = query.eq('bus_id', busId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+function buildScheduleConflictMessage(conflicts, { driverId, busId, scheduleType }) {
+  const driverConflict = conflicts.find((schedule) => schedule.driver_id === driverId);
+  const busConflict = conflicts.find((schedule) => schedule.bus_id === busId);
+  const shiftLabel = scheduleType || 'selected';
+
+  if (driverConflict && busConflict) {
+    return {
+      code: 'DRIVER_AND_BUS_ALREADY_ASSIGNED_IN_SHIFT',
+      message: `Selected driver and bus are already assigned in the ${shiftLabel} shift.`,
+      driver_schedule_id: driverConflict.id,
+      bus_schedule_id: busConflict.id,
+    };
+  }
+
+  if (driverConflict) {
+    return {
+      code: 'DRIVER_ALREADY_ASSIGNED_IN_SHIFT',
+      message: `Selected driver is already assigned in the ${shiftLabel} shift.`,
+      driver_schedule_id: driverConflict.id,
+    };
+  }
+
+  if (busConflict) {
+    return {
+      code: 'BUS_ALREADY_ASSIGNED_IN_SHIFT',
+      message: `Selected bus is already assigned in the ${shiftLabel} shift.`,
+      bus_schedule_id: busConflict.id,
+    };
+  }
+
+  return null;
+}
+
+async function findActiveTripShiftConflicts({
+  driverId,
+  busId,
+  scheduleType,
+  excludeScheduleId,
+}) {
+  if (!scheduleType || (!driverId && !busId)) return [];
+
+  let query = supabaseAdmin
+    .from('trips')
+    .select('id, schedule_id, driver_id, bus_id, schedule_type, status, started_at')
+    .eq('schedule_type', scheduleType)
+    .in('status', ACTIVE_TRIP_STATUSES)
+    .order('started_at', { ascending: false })
+    .limit(20);
+
+  if (excludeScheduleId) {
+    query = query.neq('schedule_id', excludeScheduleId);
+  }
+
+  if (driverId && busId) {
+    query = query.or(`driver_id.eq.${driverId},bus_id.eq.${busId}`);
+  } else if (driverId) {
+    query = query.eq('driver_id', driverId);
+  } else if (busId) {
+    query = query.eq('bus_id', busId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+function buildActiveTripShiftConflictMessage(conflicts, { driverId, busId, scheduleType }) {
+  const driverConflict = conflicts.find((trip) => trip.driver_id === driverId);
+  const busConflict = conflicts.find((trip) => trip.bus_id === busId);
+  const shiftLabel = scheduleType || 'selected';
+
+  if (driverConflict && busConflict) {
+    return {
+      code: 'DRIVER_AND_BUS_ACTIVE_IN_SHIFT',
+      message: `Selected driver and bus already have an active ${shiftLabel} trip. End that trip before starting another one.`,
+      driver_trip_id: driverConflict.id,
+      bus_trip_id: busConflict.id,
+    };
+  }
+
+  if (driverConflict) {
+    return {
+      code: 'DRIVER_ACTIVE_IN_SHIFT',
+      message: `Selected driver already has an active ${shiftLabel} trip. End that trip before starting another one.`,
+      driver_trip_id: driverConflict.id,
+    };
+  }
+
+  if (busConflict) {
+    return {
+      code: 'BUS_ACTIVE_IN_SHIFT',
+      message: `Selected bus already has an active ${shiftLabel} trip. End that trip before starting another one.`,
+      bus_trip_id: busConflict.id,
+    };
+  }
+
+  return null;
 }
 
 async function fetchLatestTelemetryByTripIds(tripIds) {
@@ -301,7 +473,7 @@ function buildTripListMeta(snapshot) {
 }
 
 async function fetchCurrentDriverAssignment(driverId) {
-  const { data: activeTrip, error: activeTripErr } = await supabaseAdmin
+  const { data: activeTrips, error: activeTripErr } = await supabaseAdmin
     .from('trips')
     .select(`
       id,
@@ -320,10 +492,15 @@ async function fetchCurrentDriverAssignment(driverId) {
     .eq('driver_id', driverId)
     .in('status', ACTIVE_TRIP_STATUSES)
     .order('started_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(10);
 
   if (activeTripErr) throw activeTripErr;
+
+  const activeTrip = pickBestEntryForNow(
+    activeTrips || [],
+    (trip) => trip.schedules?.start_time,
+    (trip) => trip.schedules?.end_time
+  );
 
   if (activeTrip) {
     return normalizeDriverAssignment({
@@ -523,12 +700,35 @@ router.get('/schedules', async (req, res) => {
 });
 
 router.post('/schedules/validate-assignment', async (req, res) => {
-  const { driver_id, bus_id } = req.body || {};
-  if (!driver_id || !bus_id) {
-    return res.status(400).json({ error: 'driver_id and bus_id are required' });
+  const { driver_id, bus_id, schedule_id, schedule_type } = req.body || {};
+  if (!driver_id || !bus_id || !schedule_type) {
+    return res.status(400).json({
+      error: 'driver_id, bus_id, and schedule_type are required',
+    });
   }
 
-  return res.json({ ok: true });
+  try {
+    const conflicts = await findScheduleAssignmentConflicts({
+      driverId: driver_id,
+      busId: bus_id,
+      scheduleType: schedule_type,
+      excludeScheduleId: schedule_id || undefined,
+    });
+
+    const conflictPayload = buildScheduleConflictMessage(conflicts, {
+      driverId: driver_id,
+      busId: bus_id,
+      scheduleType: schedule_type,
+    });
+
+    if (conflictPayload) {
+      return res.status(409).json(conflictPayload);
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Validation failed' });
+  }
 });
 
 router.post('/trips', requireDriverAuth, async (req, res) => {
@@ -564,6 +764,26 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       return res.json(existingTrip);
     }
 
+    const activeShiftConflicts = await findActiveTripShiftConflicts({
+      driverId: schedule.driver_id,
+      busId: schedule.bus_id,
+      scheduleType: schedule.schedule_type,
+      excludeScheduleId: schedule.id,
+    });
+
+    const activeShiftConflictPayload = buildActiveTripShiftConflictMessage(
+      activeShiftConflicts,
+      {
+        driverId: schedule.driver_id,
+        busId: schedule.bus_id,
+        scheduleType: schedule.schedule_type,
+      }
+    );
+
+    if (activeShiftConflictPayload) {
+      return res.status(409).json(activeShiftConflictPayload);
+    }
+
     const insertPayload = {
       schedule_id: schedule.id,
       route_id: schedule.route_id,
@@ -592,6 +812,30 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       .single();
 
     if (error) {
+      if (error.code === '23505') {
+        const duplicateConstraint = error.message || '';
+        if (duplicateConstraint.includes('uniq_active_trip_per_bus_shift')) {
+          return res.status(409).json({
+            code: 'BUS_ACTIVE_IN_SHIFT',
+            message: `Selected bus already has an active ${schedule.schedule_type} trip. End that trip before starting another one.`,
+          });
+        }
+
+        if (duplicateConstraint.includes('uniq_active_trip_per_driver_shift')) {
+          return res.status(409).json({
+            code: 'DRIVER_ACTIVE_IN_SHIFT',
+            message: `Selected driver already has an active ${schedule.schedule_type} trip. End that trip before starting another one.`,
+          });
+        }
+
+        if (duplicateConstraint.includes('uniq_active_trip_per_schedule')) {
+          return res.status(409).json({
+            code: 'SCHEDULE_ALREADY_ACTIVE',
+            message: 'This schedule already has an active trip.',
+          });
+        }
+      }
+
       return res.status(400).json({ error: error.message });
     }
 
@@ -607,6 +851,7 @@ router.get('/trips/active', async (req, res) => {
       .from('trips')
       .select(`
         id,
+        schedule_id,
         route_id,
         status,
         schedule_type,

@@ -87,7 +87,11 @@ const ScheduleTab = () => {
 
       if (!validationRes.ok) {
         const payload = await validationRes.json().catch(() => ({}));
-        throw new Error(payload.message || payload.error || 'Selected driver/bus is already in an active trip');
+        throw new Error(
+          payload.message ||
+            payload.error ||
+            'Selected driver or bus is already assigned in this shift',
+        );
       }
 
       await ensureShiftRouteReady(data.route_id, data.schedule_type);
