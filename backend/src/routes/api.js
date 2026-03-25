@@ -288,6 +288,7 @@ function normalizeDriverAssignment({
   source,
   can_start_now = true,
   schedule_window_message = null,
+  available_legs = [],
 }) {
   return {
     id,
@@ -303,6 +304,35 @@ function normalizeDriverAssignment({
     source,
     can_start_now,
     schedule_window_message,
+    available_legs: Array.isArray(available_legs) ? available_legs : [],
+  };
+}
+
+function buildDriverAssignmentLeg(scheduleLike, options = {}) {
+  const tripDirection = normalizeTripDirection(
+    options.trip_direction || scheduleLike?.trip_direction
+  );
+  const directionWindow = getScheduleWindowForDirection(scheduleLike, tripDirection);
+  const leg = {
+    ...scheduleLike,
+    trip_direction: tripDirection,
+    start_time: directionWindow.start_time || scheduleLike?.start_time || null,
+    end_time: directionWindow.end_time || scheduleLike?.end_time || null,
+  };
+
+  return {
+    trip_direction: tripDirection,
+    direction_label: getTripDirectionLabel(tripDirection),
+    start_time: leg.start_time,
+    end_time: leg.end_time,
+    can_start_now:
+      options.can_start_now_override == null
+        ? canStartScheduleNow(leg)
+        : Boolean(options.can_start_now_override),
+    schedule_window_message:
+      options.schedule_window_message_override === undefined
+        ? buildScheduleWindowMessage(leg)
+        : options.schedule_window_message_override,
   };
 }
 
@@ -810,6 +840,11 @@ async function fetchCurrentDriverAssignment(driverId) {
       activeTrip.schedules || activeTrip,
       tripDirection
     );
+    const activeLeg = buildDriverAssignmentLeg(activeTrip.schedules || activeTrip, {
+      trip_direction: tripDirection,
+      can_start_now_override: true,
+      schedule_window_message_override: null,
+    });
     return normalizeDriverAssignment({
       id: activeTrip.id,
       schedule_id: activeTrip.schedule_id,
@@ -822,6 +857,7 @@ async function fetchCurrentDriverAssignment(driverId) {
       buses: bus,
       source: 'trip',
       can_start_now: true,
+      available_legs: [activeLeg],
     });
   }
 
@@ -845,20 +881,29 @@ async function fetchCurrentDriverAssignment(driverId) {
 
   const scheduleLeg = pickBestScheduleLegForNow(schedules || []);
   if (!scheduleLeg) return null;
+  const availableLegs = expandScheduleLegEntries(scheduleLeg).map((leg) =>
+    buildDriverAssignmentLeg(leg)
+  );
+  const selectedLeg =
+    availableLegs.find((leg) => leg.trip_direction === scheduleLeg.trip_direction) ||
+    availableLegs[0] ||
+    null;
 
   return normalizeDriverAssignment({
     id: scheduleLeg.id,
     schedule_id: scheduleLeg.id,
     status: 'assigned',
     schedule_type: 'daily',
-    trip_direction: scheduleLeg.trip_direction,
-    start_time: scheduleLeg.start_time,
-    end_time: scheduleLeg.end_time,
+    trip_direction: selectedLeg?.trip_direction || scheduleLeg.trip_direction,
+    start_time: selectedLeg?.start_time || scheduleLeg.start_time,
+    end_time: selectedLeg?.end_time || scheduleLeg.end_time,
     routes: scheduleLeg.routes,
     buses: scheduleLeg.buses,
     source: 'schedule',
-    can_start_now: canStartScheduleNow(scheduleLeg),
-    schedule_window_message: buildScheduleWindowMessage(scheduleLeg),
+    can_start_now: selectedLeg?.can_start_now ?? canStartScheduleNow(scheduleLeg),
+    schedule_window_message:
+      selectedLeg?.schedule_window_message || buildScheduleWindowMessage(scheduleLeg),
+    available_legs: availableLegs,
   });
 }
 

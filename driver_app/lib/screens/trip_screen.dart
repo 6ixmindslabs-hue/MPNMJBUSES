@@ -23,6 +23,7 @@ class _TripScreenState extends State<TripScreen> {
   bool _loadingTrip = true;
   bool _submitting = false;
   String _tripStatus = 'assigned';
+  String? _selectedLegDirection;
   WsConnectionState _wsState = WsConnectionState.disconnected;
   int _offlineBufferSize = 0;
   Timer? _bufferCheckTimer;
@@ -66,6 +67,7 @@ class _TripScreenState extends State<TripScreen> {
       setState(() {
         _trip = trip;
         _tripStatus = normalizedStatus;
+        _selectedLegDirection = _resolveInitialLegDirection(trip);
         _loadingTrip = false;
       });
 
@@ -111,11 +113,9 @@ class _TripScreenState extends State<TripScreen> {
     if (_trip == null || _submitting) return;
 
     if ((_trip!['source'] ?? 'schedule') == 'schedule' &&
-        _trip!['can_start_now'] != true) {
+        !_selectedLegCanStartNow()) {
       _showError(
-        (_trip!['schedule_window_message'] ??
-                'This trip can only start near its scheduled time.')
-            .toString(),
+        _selectedLegWindowMessage(),
       );
       return;
     }
@@ -133,13 +133,14 @@ class _TripScreenState extends State<TripScreen> {
       if ((_trip!['source'] ?? 'schedule') == 'schedule') {
         final startedTrip = await AuthService.startAssignedTrip(
           _trip!['schedule_id'].toString(),
-          (_trip!['trip_direction'] ?? 'outbound').toString(),
+          _selectedTripDirection(),
         );
 
         _trip = {
           ..._trip!,
           'id': startedTrip['id'],
           'status': startedTrip['status'] ?? 'started',
+          'trip_direction': _selectedTripDirection(),
           'source': 'trip',
         };
       }
@@ -307,9 +308,76 @@ class _TripScreenState extends State<TripScreen> {
   }
 
   String _tripDirectionLabel() {
-    return (_trip?['trip_direction'] ?? 'outbound') == 'return'
+    return _selectedTripDirection() == 'return'
         ? 'RETURN LEG'
         : 'OUTBOUND LEG';
+  }
+
+  String _selectedTripDirection() {
+    return _selectedLeg()?['trip_direction']?.toString() ??
+        _selectedLegDirection ??
+        (_trip?['trip_direction'] ?? 'outbound').toString();
+  }
+
+  List<Map<String, dynamic>> _availableLegs() {
+    final raw = _trip?['available_legs'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((leg) => Map<String, dynamic>.from(leg))
+        .toList();
+  }
+
+  Map<String, dynamic>? _selectedLeg() {
+    final legs = _availableLegs();
+    if (legs.isEmpty) return null;
+
+    final selectedDirection = _selectedLegDirection ?? _trip?['trip_direction'];
+    for (final leg in legs) {
+      if ((leg['trip_direction'] ?? 'outbound').toString() == selectedDirection) {
+        return leg;
+      }
+    }
+
+    return legs.first;
+  }
+
+  String _resolveInitialLegDirection(Map<String, dynamic>? trip) {
+    final fallback = (trip?['trip_direction'] ?? 'outbound').toString();
+    final rawLegs = trip?['available_legs'];
+    if (rawLegs is! List) return fallback;
+
+    final legs = rawLegs
+        .whereType<Map>()
+        .map((leg) => Map<String, dynamic>.from(leg))
+        .toList();
+    if (legs.isEmpty) return fallback;
+
+    final matchingTripDirection = legs.where(
+      (leg) => (leg['trip_direction'] ?? 'outbound').toString() == fallback,
+    );
+    if (matchingTripDirection.isNotEmpty) return fallback;
+
+    final startableLeg = legs.cast<Map<String, dynamic>?>().firstWhere(
+          (leg) => leg?['can_start_now'] == true,
+          orElse: () => null,
+        );
+    if (startableLeg != null) {
+      return (startableLeg['trip_direction'] ?? 'outbound').toString();
+    }
+
+    return (legs.first['trip_direction'] ?? 'outbound').toString();
+  }
+
+  bool _selectedLegCanStartNow() {
+    return _selectedLeg()?['can_start_now'] == true;
+  }
+
+  String _selectedLegWindowMessage() {
+    return (_selectedLeg()?['schedule_window_message'] ??
+            _trip?['schedule_window_message'] ??
+            'This trip can only start near its scheduled time.')
+        .toString();
   }
 
   void _showError(String message) {
@@ -527,6 +595,11 @@ class _TripScreenState extends State<TripScreen> {
                   title: 'Tracking Status',
                   subtitle: _tripStatus.toUpperCase(),
                 ),
+                if ((_trip?['source'] ?? 'schedule') == 'schedule' &&
+                    _availableLegs().length > 1) ...[
+                  const SizedBox(height: 12),
+                  _buildLegSelector(),
+                ],
                 if (_offlineBufferSize > 0) ...[
                   const SizedBox(height: 12),
                   Container(
@@ -600,14 +673,12 @@ class _TripScreenState extends State<TripScreen> {
     }
 
     if ((_trip?['source'] ?? 'schedule') == 'schedule' &&
-        _trip?['can_start_now'] != true) {
+        !_selectedLegCanStartNow()) {
       return _buildInfoCard(
         icon: Icons.schedule_rounded,
         iconColor: Colors.amber.shade700,
         title: 'Trip Not Startable Yet',
-        subtitle: (_trip?['schedule_window_message'] ??
-                'This trip can only start near its scheduled time.')
-            .toString(),
+        subtitle: _selectedLegWindowMessage(),
       );
     }
 
@@ -662,6 +733,131 @@ class _TripScreenState extends State<TripScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLegSelector() {
+    final legs = _availableLegs();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Choose Trip Leg',
+            style: TextStyle(
+              color: Color(0xFF1E293B),
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Select outbound or return before starting live tracking.',
+            style: TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: legs.map(_buildLegChoiceCard).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLegChoiceCard(Map<String, dynamic> leg) {
+    final direction = (leg['trip_direction'] ?? 'outbound').toString();
+    final selected = direction == _selectedTripDirection();
+    final canStartNow = leg['can_start_now'] == true;
+    final label = direction == 'return' ? 'RETURN' : 'OUTBOUND';
+    final start = leg['start_time']?.toString();
+    final end = leg['end_time']?.toString();
+    final timeLabel = start == null || start.isEmpty
+        ? 'Schedule pending'
+        : end == null || end.isEmpty || end == start
+            ? start
+            : '$start - $end';
+
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _selectedLegDirection = direction;
+        });
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        width: 150,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFFEF3C7) : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFFE2E8F0),
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: selected
+                    ? const Color(0xFFB45309)
+                    : const Color(0xFF1E293B),
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              timeLabel,
+              style: const TextStyle(
+                color: Color(0xFF475569),
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: canStartNow
+                    ? const Color(0xFFDCFCE7)
+                    : const Color(0xFFFEF3C7),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                canStartNow ? 'CAN START' : 'SCHEDULED',
+                style: TextStyle(
+                  color: canStartNow
+                      ? const Color(0xFF166534)
+                      : const Color(0xFFB45309),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
