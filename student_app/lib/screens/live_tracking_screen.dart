@@ -1551,7 +1551,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.only(
+        borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(32),
           topRight: Radius.circular(32),
         ),
@@ -1644,7 +1644,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            LucideIcons.mapPinned,
+                            LucideIcons.mapPin,
                             color: Color(0xFFCBD5E1),
                             size: 30,
                           ),
@@ -1879,7 +1879,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           if (isOffRoute) ...[
             const SizedBox(height: 12),
             _buildContextBanner(
-              icon: LucideIcons.routeOff,
+              icon: LucideIcons.navigationOff,
               backgroundColor: const Color(0xFFFEF2F2),
               borderColor: const Color(0xFFFECACA),
               iconColor: const Color(0xFFDC2626),

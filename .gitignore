@@ -31,6 +31,10 @@ build/
 .flutter-plugins-dependencies
 .metadata
 pubspec.lock
+**/.gradle-user/
+**/android/key.properties
+**/*.jks
+**/*.keystore
 
 # Logs
 *.log
