@@ -437,11 +437,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 (b['trip_direction'] ?? '').toString() +
                 (b['arrival_time'] ?? '').toString()),
       );
-    final stopNameCounts = <String, int>{};
-    for (final stop in routeStops) {
-      final key = (stop['stop_name'] ?? '').toString().trim().toLowerCase();
-      stopNameCounts[key] = (stopNameCounts[key] ?? 0) + 1;
-    }
+    final stopConflictCounts = _buildStopConflictCounts(routeStops);
 
     // Prevent assertion crash if the currently selected value is NOT in the filtered dropdown list
     final bool hasValidValue =
@@ -484,19 +480,26 @@ class _SearchScreenState extends State<SearchScreen> {
             hint: const Text('Choose a stop...'),
             icon: const Icon(LucideIcons.chevronDown, size: 16),
             onChanged: onChanged,
+            selectedItemBuilder: (context) => routeStops
+                .map(
+                  (stop) => Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _compactStopLabel(stop, stopConflictCounts),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
             items: routeStops.map((stop) {
               return DropdownMenuItem<String>(
                 value: stop['id'],
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _displayStopLabel(stop, stopNameCounts),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 16),
-                  ),
-                ),
+                child: _buildStopDropdownItem(stop, stopConflictCounts),
               );
             }).toList(),
           ),
@@ -510,15 +513,12 @@ class _SearchScreenState extends State<SearchScreen> {
     if (match.isEmpty) return 'Unknown stop';
 
     final stop = Map<String, dynamic>.from(match.first);
-    final stopNameCounts = <String, int>{};
-    for (final item in _stops) {
-      final key = (item['stop_name'] ?? '').toString().trim().toLowerCase();
-      stopNameCounts[key] = (stopNameCounts[key] ?? 0) + 1;
-    }
+    final stopConflictCounts = _buildStopConflictCounts(_stops);
 
-    return _displayStopLabel(stop, stopNameCounts);
+    return _compactStopLabel(stop, stopConflictCounts);
   }
 
+  // ignore: unused_element
   String _displayStopLabel(
     Map<String, dynamic> stop,
     Map<String, int> stopNameCounts,
@@ -532,6 +532,82 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     return '$stopName (${_tripDirectionLabel(_tripDirectionOf(stop))} • ${_routeLabelForStop(stop)})';
+  }
+
+  Map<String, int> _buildStopConflictCounts(List<Map<String, dynamic>> stops) {
+    final counts = <String, int>{};
+    for (final stop in stops) {
+      final key = _stopConflictKey(stop);
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  String _stopConflictKey(Map<String, dynamic> stop) {
+    final stopName = (stop['stop_name'] ?? '').toString().trim().toLowerCase();
+    return '$stopName|${_tripDirectionOf(stop)}';
+  }
+
+  String _stopPrimaryLabel(Map<String, dynamic> stop) {
+    final stopName = stop['stop_name']?.toString().trim();
+    if (stopName == null || stopName.isEmpty) return 'Unknown stop';
+    return stopName;
+  }
+
+  String _stopSecondaryLabel(
+    Map<String, dynamic> stop,
+    Map<String, int> stopConflictCounts,
+  ) {
+    final duplicateCount = stopConflictCounts[_stopConflictKey(stop)] ?? 0;
+    final directionLabel = _tripDirectionLabel(_tripDirectionOf(stop));
+    if (duplicateCount <= 1) {
+      return directionLabel;
+    }
+
+    return '$directionLabel - ${_routeLabelForStop(stop)}';
+  }
+
+  String _compactStopLabel(
+    Map<String, dynamic> stop,
+    Map<String, int> stopConflictCounts,
+  ) {
+    return '${_stopPrimaryLabel(stop)} - ${_stopSecondaryLabel(stop, stopConflictCounts)}';
+  }
+
+  Widget _buildStopDropdownItem(
+    Map<String, dynamic> stop,
+    Map<String, int> stopConflictCounts,
+  ) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _stopPrimaryLabel(stop),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              color: Color(0xFF1E293B),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _stopSecondaryLabel(stop, stopConflictCounts),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              color: Color(0xFF64748B),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   String _routeLabelForStop(Map<String, dynamic> stop) {
