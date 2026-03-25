@@ -11,11 +11,14 @@ const router = express.Router();
 
 const { supabaseAdmin } = require('../config/supabase');
 const { ACTIVE_TRIP_STATUSES } = require('../config/tripRules');
-const { buildLiveTripMeta } = require('../services/tripLiveService');
+const { buildLiveTripMeta, isTelemetryOnline } = require('../services/tripLiveService');
 const { buildLiveRouteSnapshot } = require('../services/liveRouteService');
 const { rebuildRouteGeometryForRoute } = require('../services/routeGeometryService');
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
+const ACTIVE_TRIP_STALE_GRACE_SECONDS = Number(
+  process.env.ACTIVE_TRIP_STALE_GRACE_SECONDS || 900
+);
 
 async function requireDriverAuth(req, res, next) {
   const auth = req.headers.authorization;
@@ -59,6 +62,7 @@ function normalizeBus(bus) {
 
   return {
     id: bus.id,
+    bus_number: bus.bus_number || bus.registration_number,
     registration_number: bus.registration_number || bus.bus_number,
     bus_name: bus.bus_name,
     capacity: bus.capacity,
@@ -184,6 +188,103 @@ function normalizeDriverAssignment({
     routes: normalizeRoute(routes),
     buses: normalizeBus(buses),
     source,
+  };
+}
+
+function normalizeDriver(driver) {
+  if (!driver) return null;
+  return {
+    id: driver.id,
+    name: driver.name,
+    phone: driver.phone,
+  };
+}
+
+function resolveTripRoute(trip) {
+  return normalizeRoute(trip?.trip_route || trip?.schedules?.routes);
+}
+
+function resolveTripBus(trip) {
+  return normalizeBus(trip?.buses || trip?.schedules?.buses);
+}
+
+function resolveTripDriver(trip) {
+  return normalizeDriver(trip?.drivers || trip?.schedules?.drivers);
+}
+
+function hasScheduleEndedBeyondGrace(nowSeconds, startSeconds, endSeconds, graceSeconds) {
+  if (startSeconds == null || endSeconds == null) return false;
+  if (isWithinScheduleWindow(nowSeconds, startSeconds, endSeconds)) return false;
+
+  if (endSeconds >= startSeconds) {
+    return nowSeconds > endSeconds + graceSeconds;
+  }
+
+  return nowSeconds > endSeconds + graceSeconds && nowSeconds < startSeconds;
+}
+
+function shouldHideActiveTrip(trip, latestTelemetry) {
+  const lastSeenAt = latestTelemetry?.timestamp || null;
+  const isOnline = isTelemetryOnline(lastSeenAt);
+  if (isOnline) return false;
+
+  const bus = resolveTripBus(trip);
+  const hasIdentity =
+    Boolean(trip?.schedule_id || trip?.schedules?.id) ||
+    Boolean(trip?.bus_id || bus?.id);
+
+  if (!hasIdentity) {
+    return true;
+  }
+
+  if (!trip?.schedule_id && !trip?.schedules?.id) {
+    const startedAtMs = trip?.started_at ? new Date(trip.started_at).getTime() : Number.NaN;
+    if (
+      Number.isFinite(startedAtMs) &&
+      Date.now() - startedAtMs > ACTIVE_TRIP_STALE_GRACE_SECONDS * 1000
+    ) {
+      return true;
+    }
+  }
+
+  const nowSeconds = getNowSecondsInTimezone();
+  const startSeconds = parseScheduleTimeToSeconds(
+    trip?.schedules?.start_time || trip?.start_time
+  );
+  const endSeconds = parseScheduleTimeToSeconds(
+    trip?.schedules?.end_time || trip?.end_time
+  );
+
+  return hasScheduleEndedBeyondGrace(
+    nowSeconds,
+    startSeconds,
+    endSeconds,
+    ACTIVE_TRIP_STALE_GRACE_SECONDS
+  );
+}
+
+function normalizeActiveTripForResponse(trip) {
+  const route = resolveTripRoute(trip);
+  const bus = resolveTripBus(trip);
+  const driver = resolveTripDriver(trip);
+  const schedule = trip?.schedules
+    ? {
+        ...trip.schedules,
+        routes: normalizeRoute(trip.schedules.routes),
+        buses: normalizeBus(trip.schedules.buses) || bus,
+        drivers: normalizeDriver(trip.schedules.drivers) || driver,
+      }
+    : null;
+
+  return {
+    ...trip,
+    route_id: trip?.route_id || route?.id || null,
+    bus_id: trip?.bus_id || bus?.id || null,
+    driver_id: trip?.driver_id || driver?.id || null,
+    trip_route: route,
+    buses: bus,
+    drivers: driver,
+    schedules: schedule,
   };
 }
 
@@ -478,9 +579,15 @@ async function fetchCurrentDriverAssignment(driverId) {
     .select(`
       id,
       schedule_id,
+      route_id,
+      bus_id,
+      driver_id,
       status,
       schedule_type,
       started_at,
+      trip_route:route_id (id, route_name, start_location, end_location),
+      buses:bus_id (id, bus_number, bus_name, capacity),
+      drivers:driver_id (id, name, phone),
       schedules:schedule_id (
         id,
         start_time,
@@ -496,13 +603,22 @@ async function fetchCurrentDriverAssignment(driverId) {
 
   if (activeTripErr) throw activeTripErr;
 
+  const activeTripTelemetry = await fetchLatestTelemetryByTripIds(
+    (activeTrips || []).map((trip) => trip.id)
+  );
+  const visibleActiveTrips = (activeTrips || []).filter(
+    (trip) => !shouldHideActiveTrip(trip, activeTripTelemetry[trip.id] || null)
+  );
+
   const activeTrip = pickBestEntryForNow(
-    activeTrips || [],
+    visibleActiveTrips,
     (trip) => trip.schedules?.start_time,
     (trip) => trip.schedules?.end_time
   );
 
   if (activeTrip) {
+    const route = resolveTripRoute(activeTrip);
+    const bus = resolveTripBus(activeTrip);
     return normalizeDriverAssignment({
       id: activeTrip.id,
       schedule_id: activeTrip.schedule_id,
@@ -510,8 +626,8 @@ async function fetchCurrentDriverAssignment(driverId) {
       schedule_type: activeTrip.schedule_type,
       start_time: activeTrip.schedules?.start_time,
       end_time: activeTrip.schedules?.end_time,
-      routes: activeTrip.schedules?.routes,
-      buses: activeTrip.schedules?.buses,
+      routes: route,
+      buses: bus,
       source: 'trip',
     });
   }
@@ -853,12 +969,16 @@ router.get('/trips/active', async (req, res) => {
         id,
         schedule_id,
         route_id,
+        bus_id,
+        driver_id,
         status,
         schedule_type,
         started_at,
         paused_at,
         completed_at,
         trip_route:route_id (*),
+        buses:bus_id (id, bus_number, bus_name, capacity),
+        drivers:driver_id (id, name, phone),
         schedules:schedule_id (
           id,
           start_time,
@@ -879,10 +999,13 @@ router.get('/trips/active', async (req, res) => {
     const trips = data || [];
     const tripIds = trips.map((trip) => trip.id);
     const telemetryMap = await fetchLatestTelemetryByTripIds(tripIds);
-    const stopsMap = await fetchStopsByRouteShiftPairs(trips);
+    const visibleTrips = trips.filter(
+      (trip) => !shouldHideActiveTrip(trip, telemetryMap[trip.id] || null)
+    );
+    const stopsMap = await fetchStopsByRouteShiftPairs(visibleTrips);
 
     const enriched = await Promise.all(
-      trips.map(async (trip) => {
+      visibleTrips.map(async (trip) => {
         const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
         const stopKey = routeId ? `${routeId}::${trip.schedule_type}` : '';
         const latestTelemetry = telemetryMap[trip.id] || null;
@@ -899,7 +1022,7 @@ router.get('/trips/active', async (req, res) => {
           });
 
           return {
-            ...trip,
+            ...normalizeActiveTripForResponse(trip),
             latest_telemetry: latestTelemetry,
             ...buildTripListMeta(snapshot),
           };
@@ -911,7 +1034,7 @@ router.get('/trips/active', async (req, res) => {
           });
 
           return {
-            ...trip,
+            ...normalizeActiveTripForResponse(trip),
             latest_telemetry: latestTelemetry,
             ...fallbackMeta,
           };

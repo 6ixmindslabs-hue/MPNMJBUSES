@@ -53,11 +53,12 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       final List<dynamic> activeData = jsonDecode(activeResponse.body);
       final List<Map<String, dynamic>> activeTrips = _dedupeTripsByBus(
         activeData
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .where(_matchesRouteAndShift)
-          .map(_normalizeActiveTrip)
-          .toList(),
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .where(_matchesRouteAndShift)
+            .map(_normalizeActiveTrip)
+            .where(_hasRenderableBus)
+            .toList(),
       );
 
       final schedulesResponse = await http.get(
@@ -83,10 +84,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
               .map(_scheduleIdOf)
               .where((id) => id.isNotEmpty)
               .toSet();
-          final activeBusIds = activeTrips
-              .map(_busIdOf)
-              .where((id) => id.isNotEmpty)
-              .toSet();
+          final activeBusIds =
+              activeTrips.map(_busIdOf).where((id) => id.isNotEmpty).toSet();
           merged = [
             ...activeTrips,
             ...scheduledTrips.where(
@@ -113,7 +112,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
   }
 
   String get _selectedRouteId {
-    final selectedRouteId = (widget.fromStop['route_id'] ?? '').toString().trim();
+    final selectedRouteId =
+        (widget.fromStop['route_id'] ?? '').toString().trim();
     if (selectedRouteId.isNotEmpty) return selectedRouteId;
     return (widget.toStop['route_id'] ?? '').toString().trim();
   }
@@ -130,7 +130,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       item['routes'] ?? schedule['routes'] ?? item['trip_route'] ?? const {},
     );
 
-    final itemRouteId = (item['route_id'] ?? route['id'] ?? '').toString().trim();
+    final itemRouteId =
+        (item['route_id'] ?? route['id'] ?? '').toString().trim();
     final itemShift = (item['schedule_type'] ?? item['shift'] ?? '')
         .toString()
         .toLowerCase()
@@ -146,12 +147,31 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
 
   Map<String, dynamic> _normalizeActiveTrip(Map<String, dynamic> trip) {
     final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
+    final route = Map<String, dynamic>.from(
+      trip['trip_route'] ?? trip['routes'] ?? schedule['routes'] ?? const {},
+    );
+    final bus = Map<String, dynamic>.from(
+      trip['buses'] ?? schedule['buses'] ?? const {},
+    );
+    final driver = Map<String, dynamic>.from(
+      trip['drivers'] ?? schedule['drivers'] ?? const {},
+    );
+
     return {
       ...trip,
+      'route_id': trip['route_id'] ?? route['id'],
       'schedule_id': trip['schedule_id'] ?? schedule['id'],
-      'bus_id': trip['bus_id'] ?? schedule['buses']?['id'],
+      'bus_id': trip['bus_id'] ?? bus['id'] ?? schedule['buses']?['id'],
       'source_type': 'trip',
       'is_trackable': true,
+      'schedules': {
+        ...schedule,
+        'id': trip['schedule_id'] ?? schedule['id'],
+        'schedule_type': trip['schedule_type'] ?? schedule['schedule_type'],
+        'routes': route,
+        'buses': bus,
+        'drivers': driver,
+      },
     };
   }
 
@@ -201,12 +221,27 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     final rootValue = (item['bus_id'] ?? '').toString().trim();
     if (rootValue.isNotEmpty) return rootValue;
 
-    final schedule = Map<String, dynamic>.from(item['schedules'] ?? const {});
-    final bus = Map<String, dynamic>.from(schedule['buses'] ?? const {});
+    final bus = _busOf(item);
     return (bus['id'] ?? '').toString().trim();
   }
 
-  List<Map<String, dynamic>> _dedupeTripsByBus(List<Map<String, dynamic>> trips) {
+  Map<String, dynamic> _busOf(Map<String, dynamic> item) {
+    final schedule = Map<String, dynamic>.from(item['schedules'] ?? const {});
+    return Map<String, dynamic>.from(
+      item['buses'] ?? schedule['buses'] ?? const {},
+    );
+  }
+
+  bool _hasRenderableBus(Map<String, dynamic> item) {
+    final bus = _busOf(item);
+    return _busIdOf(item).isNotEmpty ||
+        (bus['bus_number'] ?? '').toString().trim().isNotEmpty ||
+        (bus['registration_number'] ?? '').toString().trim().isNotEmpty ||
+        (bus['bus_name'] ?? '').toString().trim().isNotEmpty;
+  }
+
+  List<Map<String, dynamic>> _dedupeTripsByBus(
+      List<Map<String, dynamic>> trips) {
     final seenKeys = <String>{};
     final result = <Map<String, dynamic>>[];
 
@@ -233,7 +268,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     if (!isTrackable) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('This morning bus is scheduled but has not started live tracking yet.'),
+          content: Text(
+              'This bus is scheduled but has not started live tracking yet.'),
         ),
       );
       return;
@@ -258,7 +294,11 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
             height: 32,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFFFACC15), Color(0xFFF59E0B), Color(0xFFEA580C)],
+                colors: [
+                  Color(0xFFFACC15),
+                  Color(0xFFF59E0B),
+                  Color(0xFFEA580C)
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -277,7 +317,8 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          const Text("Available Buses", style: TextStyle(fontWeight: FontWeight.w900))
+          const Text("Available Buses",
+              style: TextStyle(fontWeight: FontWeight.w900))
         ]),
         leading: IconButton(
           icon: const Icon(LucideIcons.chevronLeft, color: Color(0xFF1E293B)),
@@ -348,7 +389,11 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
               height: 120,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFFFACC15), Color(0xFFF59E0B), Color(0xFFEA580C)],
+                  colors: [
+                    Color(0xFFFACC15),
+                    Color(0xFFF59E0B),
+                    Color(0xFFEA580C)
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -392,14 +437,12 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
   }
 
   Widget _buildBusCard(Map<String, dynamic> trip) {
-    final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
-    final bus = Map<String, dynamic>.from(schedule['buses'] ?? const {});
+    final bus = _busOf(trip);
     final isTrackable = trip['is_trackable'] == true;
     final isOnline = trip['is_online'] == true;
     final isScheduledOnly = trip['source_type'] == 'schedule';
-    final statusLabel = isScheduledOnly
-        ? 'SCHEDULED'
-        : (isOnline ? 'ONLINE' : 'OFFLINE');
+    final statusLabel =
+        isScheduledOnly ? 'SCHEDULED' : (isOnline ? 'ONLINE' : 'OFFLINE');
     final statusColor = isScheduledOnly
         ? const Color(0xFFF59E0B)
         : (isOnline ? Colors.green : Colors.red);
@@ -438,7 +481,9 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          bus['bus_number']?.toString() ?? 'N/A',
+                          bus['bus_number']?.toString() ??
+                              bus['registration_number']?.toString() ??
+                              'N/A',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -549,7 +594,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
                             size: 16,
                           ),
                           const SizedBox(width: 8),
-                          Text(isTrackable ? 'TRACK' : 'WAITING',
+                          Text(isTrackable ? 'TRACK' : 'NOT STARTED',
                               style: const TextStyle(
                                   fontWeight: FontWeight.w900, fontSize: 14)),
                         ],
@@ -584,4 +629,3 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
     );
   }
 }
-

@@ -27,7 +27,7 @@ class GpsTaskHandler extends TaskHandler {
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 0,
-      intervalDuration: Duration(milliseconds: AppConfig.gpsIntervalMs),
+      intervalDuration: const Duration(milliseconds: AppConfig.gpsIntervalMs),
       forceLocationManager: false,
     );
 
@@ -41,11 +41,14 @@ class GpsTaskHandler extends TaskHandler {
   void _onNewPosition(Position pos) {
     if (_lastPosition != null) {
       final double dist = Geolocator.distanceBetween(
-        _lastPosition!.latitude, _lastPosition!.longitude,
-        pos.latitude, pos.longitude,
+        _lastPosition!.latitude,
+        _lastPosition!.longitude,
+        pos.latitude,
+        pos.longitude,
       );
       final double timeDelta = (pos.timestamp.millisecondsSinceEpoch -
-          _lastPosition!.timestamp.millisecondsSinceEpoch) / 1000.0;
+              _lastPosition!.timestamp.millisecondsSinceEpoch) /
+          1000.0;
       final double speedKmh = timeDelta > 0 ? (dist / timeDelta) * 3.6 : 0;
 
       if (speedKmh > 120) return;
@@ -86,9 +89,9 @@ class GpsTaskHandler extends TaskHandler {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
     _lastPosition = null;
+    _wsTrackingService.disconnect();
   }
 }
-
 
 /// GPS Tracking Service
 /// This class now manages the lifecycle of the background task.

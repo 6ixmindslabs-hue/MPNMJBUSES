@@ -7,7 +7,13 @@ import 'package:web_socket_channel/status.dart' as status;
 import '../config/constants.dart';
 import 'offline_buffer.dart';
 
-enum WsConnectionState { disconnected, connecting, connected, authenticating, ready }
+enum WsConnectionState {
+  disconnected,
+  connecting,
+  connected,
+  authenticating,
+  ready
+}
 
 /// WebSocket Tracking Service
 /// Handles:
@@ -48,6 +54,11 @@ class WsTrackingService {
       return true;
     }
 
+    final switchingTrip = _tripId != null && _tripId != tripId;
+    if (switchingTrip || _state != WsConnectionState.disconnected) {
+      _disposeConnection();
+    }
+
     _wsToken = wsToken;
     _tripId = tripId;
     _allowReconnect = true;
@@ -67,15 +78,20 @@ class WsTrackingService {
   }
 
   Future<void> _doConnect() async {
-    if (_state == WsConnectionState.connecting || _state == WsConnectionState.ready) return;
+    if (_state == WsConnectionState.connecting ||
+        _state == WsConnectionState.ready) {
+      return;
+    }
     _setState(WsConnectionState.connecting);
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(AppConfig.trackingWsUrl));
-      _channel!.stream.listen(
-        _onMessage,
-        onError: _onError,
-        onDone: _onDone,
+      final channel =
+          WebSocketChannel.connect(Uri.parse(AppConfig.trackingWsUrl));
+      _channel = channel;
+      channel.stream.listen(
+        (raw) => _onMessage(channel, raw),
+        onError: (error) => _onError(channel, error),
+        onDone: () => _onDone(channel),
         cancelOnError: false,
       );
 
@@ -98,7 +114,9 @@ class WsTrackingService {
     }
   }
 
-  void _onMessage(dynamic raw) {
+  void _onMessage(WebSocketChannel channel, dynamic raw) {
+    if (!identical(channel, _channel)) return;
+
     try {
       final msg = jsonDecode(raw);
       if (msg['type'] == 'AUTH_OK') {
@@ -124,7 +142,9 @@ class WsTrackingService {
     } catch (_) {}
   }
 
-  void _onError(Object error) {
+  void _onError(WebSocketChannel channel, Object error) {
+    if (!identical(channel, _channel)) return;
+
     _heartbeatTimer?.cancel();
     if (!(_authCompleter?.isCompleted ?? true)) {
       _authCompleter?.complete(false);
@@ -135,7 +155,9 @@ class WsTrackingService {
     }
   }
 
-  void _onDone() {
+  void _onDone(WebSocketChannel channel) {
+    if (!identical(channel, _channel)) return;
+
     _heartbeatTimer?.cancel();
     if (!(_authCompleter?.isCompleted ?? true)) {
       _authCompleter?.complete(false);
@@ -144,12 +166,27 @@ class WsTrackingService {
     if (_allowReconnect) {
       _scheduleReconnect();
     }
+  }
+
+  void _disposeConnection() {
+    _allowReconnect = false;
+    _reconnectTimer?.cancel();
+    _heartbeatTimer?.cancel();
+
+    final channel = _channel;
+    _channel = null;
+
+    try {
+      channel?.sink.close(status.normalClosure);
+    } catch (_) {}
+
+    _setState(WsConnectionState.disconnected);
   }
 
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(
-      Duration(milliseconds: AppConfig.wsReconnectDelayMs),
+      const Duration(milliseconds: AppConfig.wsReconnectDelayMs),
       _doConnect,
     );
   }
@@ -182,7 +219,10 @@ class WsTrackingService {
     final points = await OfflineGpsBuffer.getAll();
     if (points.isEmpty) return;
 
-    _sendRaw({'type': 'BATCH', 'payload': {'points': points}});
+    _sendRaw({
+      'type': 'BATCH',
+      'payload': {'points': points}
+    });
     await OfflineGpsBuffer.clear();
   }
 
@@ -214,7 +254,10 @@ class WsTrackingService {
       final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
       final wsToken = decoded['wsToken']?.toString();
       final tripId = decoded['tripId']?.toString();
-      if (wsToken == null || wsToken.isEmpty || tripId == null || tripId.isEmpty) {
+      if (wsToken == null ||
+          wsToken.isEmpty ||
+          tripId == null ||
+          tripId.isEmpty) {
         return false;
       }
       return await connect(wsToken, tripId);
@@ -240,10 +283,6 @@ class WsTrackingService {
   }
 
   void disconnect() {
-    _allowReconnect = false;
-    _reconnectTimer?.cancel();
-    _heartbeatTimer?.cancel();
-    _channel?.sink.close(status.normalClosure);
-    _setState(WsConnectionState.disconnected);
+    _disposeConnection();
   }
 }

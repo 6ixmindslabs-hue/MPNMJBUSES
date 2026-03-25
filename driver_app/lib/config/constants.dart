@@ -1,15 +1,23 @@
 class AppConfig {
+  static String _trimTrailingSlash(String value) {
+    if (value.endsWith('/')) {
+      return value.substring(0, value.length - 1);
+    }
+    return value;
+  }
+
   static String get trackingServerUrl {
     const override = String.fromEnvironment('TRACKING_API_URL', defaultValue: '');
     if (override.isNotEmpty) {
-      return override.endsWith('/api') ? override : '$override/api';
+      final normalized = _trimTrailingSlash(override);
+      return normalized.endsWith('/api') ? normalized : '$normalized/api';
     }
     return 'https://mpnmjec-trackingserver.onrender.com/api';
   }
 
   static String get trackingWsUrl {
     const override = String.fromEnvironment('TRACKING_WS_URL', defaultValue: '');
-    if (override.isNotEmpty) return override;
+    if (override.isNotEmpty) return _trimTrailingSlash(override);
     return 'wss://mpnmjec-trackingserver.onrender.com/ws';
   }
 
