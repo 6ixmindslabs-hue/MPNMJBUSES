@@ -35,7 +35,7 @@ export interface Stop {
   latitude: number;
   longitude: number;
   arrival_time: string;
-  schedule_type: 'morning' | 'evening';
+  schedule_type?: 'daily';
   created_at?: string;
 }
 
@@ -44,7 +44,7 @@ export interface Schedule {
   route_id: string;
   bus_id: string;
   driver_id: string;
-  schedule_type: 'morning' | 'evening';
+  schedule_type?: 'daily';
   start_time: string;
   end_time: string;
   created_at?: string;

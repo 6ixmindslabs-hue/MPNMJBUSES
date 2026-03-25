@@ -29,7 +29,7 @@ The system follows a modern, distributed architecture:
 - **Role:** Fleet, Personnel, and Strategy Management.
 - **Main Technologies:** `React 19`, `Vite`, `Tailwind CSS`, `Leaflet` (Mapping), `Zustand` (State management).
 - **Key Features:**
-    - **Synergy Strategy (Scheduling):** Advanced scheduling system for Morning and Evening shifts. (Newly updated with Shift-Aware validation).
+    - **Synergy Strategy (Scheduling):** Single daily schedule assignment with route readiness checks and assignment validation.
     - **Route & Stop Architect:** Point-and-click interface for defining corridors and passenger pickup points.
     - **Mission Monitor:** Real-time dashboard showing the status of all active hardware (buses) and operators (drivers).
     - **Fleet Simulator:** Allows admins to simulate bus movement for system testing.
@@ -39,7 +39,7 @@ The system follows a modern, distributed architecture:
 - **Main Technologies:** `Flutter`, `Geolocator`, `Flutter Foreground Task`.
 - **Key Features:**
     - **Background Tracking:** Continues to stream GPS data even when the phone screen is off or the app is minimized.
-    - **Shift Selection:** Simple interface for drivers to select their assigned route and start their "Mission."
+    - **Daily Trip Start:** Simple interface for drivers to open their assigned route and start the day’s live trip.
     - **Real-time Status Sync:** Keeps the driver informed if they are on-route or delayed.
 
 ### D. Student App (Mobile)
@@ -47,7 +47,7 @@ The system follows a modern, distributed architecture:
 - **Main Technologies:** `Flutter`, `Flutter Map`, `AudioPlayers`.
 - **Key Features:**
     - **Live Radar:** Real-time map view showing all active buses.
-    - **Intelligent Search:** Quick filter by route name or shift type with local search history.
+    - **Intelligent Search:** Quick filter by route name with local search history.
     - **Bus Alarm:** (Infrastructure ready) For notifying students when a bus is nearing their stop.
     - **ETA Transparency:** Shows exactly how many minutes away the bus is and its delay status.
 
@@ -59,7 +59,7 @@ The database is structured for high-performance tracking and historical auditing
 - `buses`: Hardware records (Capacity, Reg Number).
 - `routes`: Geospacial corridors (Start/End locations).
 - `stops`: Sequence-based passenger nodes with scheduled arrival times.
-- `schedules`: The link between a Driver, Bus, and Route for a specific Shift.
+- `schedules`: The link between a Driver, Bus, and Route for the single daily service.
 - `trips`: Active instances of a schedule.
 - `telemetry`: Historical GPS logs (latitude, longitude, speed, heading).
 
@@ -67,8 +67,8 @@ The database is structured for high-performance tracking and historical auditing
 
 ## 5. Core Business Logics
 
-### I. Shift-Aware Assignment
-Prevents administrative errors by ensuring a driver isn't double-booked for the same shift (Morning/Evening), while allowing them to be assigned to both shifts for a full day of operations.
+### I. Daily Assignment Guard
+Prevents administrative errors by ensuring a driver or bus cannot be double-booked. Each driver and bus can hold only one daily schedule and one active trip at a time.
 
 ### II. Dynamic ETA Logic
 ETAs are recalculated on every GPS heartbeat (approx 3-5 seconds). The algorithm considers:

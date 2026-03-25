@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS public.routes (
 );
 
 -- 4. Create Stops Table
--- Stops belong to a route and a specific shift (morning/evening)
+-- Stops belong to a route and the single daily service plan
 CREATE TABLE IF NOT EXISTS public.stops (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     route_id UUID REFERENCES public.routes(id) ON DELETE CASCADE,
@@ -44,18 +44,18 @@ CREATE TABLE IF NOT EXISTS public.stops (
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     arrival_time TIME NOT NULL,
-    schedule_type TEXT NOT NULL DEFAULT 'morning', -- 'morning' | 'evening'
+    schedule_type TEXT NOT NULL DEFAULT 'daily', -- daily service marker
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
 -- 5. Create Schedules Table
--- A schedule links a Route + Bus + Driver for a specific shift
+-- A schedule links a Route + Bus + Driver for the daily service
 CREATE TABLE IF NOT EXISTS public.schedules (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     route_id UUID REFERENCES public.routes(id) ON DELETE CASCADE,
     bus_id UUID REFERENCES public.buses(id) ON DELETE CASCADE,
     driver_id UUID REFERENCES public.drivers(id) ON DELETE CASCADE,
-    schedule_type TEXT NOT NULL,  -- 'morning' | 'evening'
+    schedule_type TEXT NOT NULL DEFAULT 'daily',  -- daily service marker
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS public.trips (
     driver_id UUID REFERENCES public.drivers(id) ON DELETE SET NULL,
     bus_id UUID REFERENCES public.buses(id) ON DELETE SET NULL,
     route_id UUID REFERENCES public.routes(id) ON DELETE SET NULL,
-    schedule_type TEXT,  -- 'morning' | 'evening' — copied from schedule for quick filtering
+    schedule_type TEXT DEFAULT 'daily',  -- copied from schedule for compatibility
     status TEXT NOT NULL DEFAULT 'started', -- 'started' | 'running' | 'paused' | 'completed' | 'cancelled'
     started_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()),
     paused_at TIMESTAMP WITH TIME ZONE,
@@ -97,7 +97,85 @@ CREATE TABLE IF NOT EXISTS public.telemetry (
 -- ============================================================
 
 -- Add schedule_type to stops (if upgrading from old schema)
-ALTER TABLE public.stops ADD COLUMN IF NOT EXISTS schedule_type TEXT NOT NULL DEFAULT 'morning';
+ALTER TABLE public.stops ADD COLUMN IF NOT EXISTS schedule_type TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE public.schedules ADD COLUMN IF NOT EXISTS schedule_type TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE public.trips ADD COLUMN IF NOT EXISTS schedule_type TEXT DEFAULT 'daily';
+ALTER TABLE public.stops ALTER COLUMN schedule_type SET DEFAULT 'daily';
+ALTER TABLE public.schedules ALTER COLUMN schedule_type SET DEFAULT 'daily';
+ALTER TABLE public.trips ALTER COLUMN schedule_type SET DEFAULT 'daily';
+UPDATE public.stops SET schedule_type = 'daily' WHERE schedule_type IS DISTINCT FROM 'daily';
+UPDATE public.schedules SET schedule_type = 'daily' WHERE schedule_type IS DISTINCT FROM 'daily';
+UPDATE public.trips SET schedule_type = 'daily' WHERE schedule_type IS DISTINCT FROM 'daily';
+
+DELETE FROM public.schedules s
+WHERE s.id IN (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY bus_id
+        ORDER BY created_at DESC NULLS LAST, id DESC
+      ) AS row_num
+    FROM public.schedules
+    WHERE bus_id IS NOT NULL
+  ) ranked
+  WHERE ranked.row_num > 1
+);
+
+DELETE FROM public.schedules s
+WHERE s.id IN (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY driver_id
+        ORDER BY created_at DESC NULLS LAST, id DESC
+      ) AS row_num
+    FROM public.schedules
+    WHERE driver_id IS NOT NULL
+  ) ranked
+  WHERE ranked.row_num > 1
+);
+
+UPDATE public.trips
+SET status = 'cancelled',
+    completed_at = COALESCE(completed_at, timezone('utc', now()))
+WHERE id IN (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY bus_id
+        ORDER BY started_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+      ) AS row_num
+    FROM public.trips
+    WHERE status IN ('started', 'running', 'paused')
+      AND bus_id IS NOT NULL
+  ) ranked
+  WHERE ranked.row_num > 1
+);
+
+UPDATE public.trips
+SET status = 'cancelled',
+    completed_at = COALESCE(completed_at, timezone('utc', now()))
+WHERE id IN (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY driver_id
+        ORDER BY started_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+      ) AS row_num
+    FROM public.trips
+    WHERE status IN ('started', 'running', 'paused')
+      AND driver_id IS NOT NULL
+  ) ranked
+  WHERE ranked.row_num > 1
+);
 
 -- Add route_code and route_name to routes (if upgrading from old schema)
 ALTER TABLE public.routes ADD COLUMN IF NOT EXISTS route_name TEXT;
@@ -168,32 +246,35 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_trip_id ON public.telemetry(trip_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON public.telemetry(timestamp DESC);
 
 -- ============================================================
--- CONCURRENCY-SAFE SHIFT GUARDS
+-- CONCURRENCY-SAFE DAILY SERVICE GUARDS
 -- Enforces:
--- 1. A driver/bus can have one schedule per shift.
--- 2. A driver/bus can have one active trip per shift.
+-- 1. A driver/bus can have one daily schedule.
+-- 2. A driver/bus can have one active daily trip.
 -- 3. The same schedule cannot be started twice concurrently.
 -- ============================================================
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_schedule_driver_per_shift
-ON public.schedules(driver_id, schedule_type)
+DROP INDEX IF EXISTS public.uniq_schedule_driver_per_shift;
+DROP INDEX IF EXISTS public.uniq_schedule_bus_per_shift;
+DROP INDEX IF EXISTS public.uniq_active_trip_per_driver_shift;
+DROP INDEX IF EXISTS public.uniq_active_trip_per_bus_shift;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_schedule_driver_daily
+ON public.schedules(driver_id)
 WHERE driver_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_schedule_bus_per_shift
-ON public.schedules(bus_id, schedule_type)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_schedule_bus_daily
+ON public.schedules(bus_id)
 WHERE bus_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_driver_shift
-ON public.trips(driver_id, schedule_type)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_driver_daily
+ON public.trips(driver_id)
 WHERE status IN ('started', 'running', 'paused')
-  AND driver_id IS NOT NULL
-  AND schedule_type IS NOT NULL;
+  AND driver_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_bus_shift
-ON public.trips(bus_id, schedule_type)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_bus_daily
+ON public.trips(bus_id)
 WHERE status IN ('started', 'running', 'paused')
-  AND bus_id IS NOT NULL
-  AND schedule_type IS NOT NULL;
+  AND bus_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_trip_per_schedule
 ON public.trips(schedule_id)

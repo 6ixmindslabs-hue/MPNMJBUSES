@@ -19,6 +19,12 @@ const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Kolkata';
 const ACTIVE_TRIP_STALE_GRACE_SECONDS = Number(
   process.env.ACTIVE_TRIP_STALE_GRACE_SECONDS || 900
 );
+const TRIP_START_EARLY_WINDOW_SECONDS = Number(
+  process.env.TRIP_START_EARLY_WINDOW_SECONDS || 1800
+);
+const TRIP_START_LATE_WINDOW_SECONDS = Number(
+  process.env.TRIP_START_LATE_WINDOW_SECONDS || 900
+);
 
 async function requireDriverAuth(req, res, next) {
   const auth = req.headers.authorization;
@@ -79,13 +85,18 @@ function parseScheduleTimeToSeconds(timeValue) {
 }
 
 function getNowSecondsInTimezone() {
+  return getSecondsForDateInTimezone(new Date());
+}
+
+function getSecondsForDateInTimezone(dateValue) {
+  const date = dateValue ? new Date(dateValue) : new Date();
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: APP_TIMEZONE,
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(date);
 
   const values = Object.fromEntries(
     parts
@@ -108,6 +119,23 @@ function isWithinScheduleWindow(nowSeconds, startSeconds, endSeconds) {
   }
 
   return nowSeconds >= startSeconds || nowSeconds <= endSeconds;
+}
+
+function isWithinTripStartWindow(nowSeconds, startSeconds, endSeconds) {
+  if (startSeconds == null || endSeconds == null) return true;
+
+  if (endSeconds >= startSeconds) {
+    return (
+      nowSeconds >= Math.max(0, startSeconds - TRIP_START_EARLY_WINDOW_SECONDS) &&
+      nowSeconds <= endSeconds + TRIP_START_LATE_WINDOW_SECONDS
+    );
+  }
+
+  const normalizedStartBoundary =
+    (startSeconds - TRIP_START_EARLY_WINDOW_SECONDS + 86400) % 86400;
+  const normalizedEndBoundary =
+    (endSeconds + TRIP_START_LATE_WINDOW_SECONDS) % 86400;
+  return nowSeconds >= normalizedStartBoundary || nowSeconds <= normalizedEndBoundary;
 }
 
 function secondsUntilNextStart(nowSeconds, startSeconds) {
@@ -177,17 +205,21 @@ function normalizeDriverAssignment({
   routes,
   buses,
   source,
+  can_start_now = true,
+  schedule_window_message = null,
 }) {
   return {
     id,
     schedule_id,
     status: status === 'started' ? 'running' : status,
-    shift: schedule_type,
+    service_type: 'daily',
     start_time,
     end_time,
     routes: normalizeRoute(routes),
     buses: normalizeBus(buses),
     source,
+    can_start_now,
+    schedule_window_message,
   };
 }
 
@@ -223,7 +255,33 @@ function hasScheduleEndedBeyondGrace(nowSeconds, startSeconds, endSeconds, grace
   return nowSeconds > endSeconds + graceSeconds && nowSeconds < startSeconds;
 }
 
+function canStartScheduleNow(schedule) {
+  const startSeconds = parseScheduleTimeToSeconds(schedule?.start_time);
+  const endSeconds = parseScheduleTimeToSeconds(schedule?.end_time);
+  return isWithinTripStartWindow(getNowSecondsInTimezone(), startSeconds, endSeconds);
+}
+
+function buildScheduleWindowMessage(schedule) {
+  return `The daily trip can only start near ${schedule?.start_time || 'its scheduled time'}.`;
+}
+
+function didTripStartOutsideScheduleWindow(trip, scheduleLike) {
+  if (!trip?.started_at) return false;
+  const startSeconds = parseScheduleTimeToSeconds(scheduleLike?.start_time);
+  const endSeconds = parseScheduleTimeToSeconds(scheduleLike?.end_time);
+  const startedAtSeconds = getSecondsForDateInTimezone(trip.started_at);
+  return !isWithinTripStartWindow(startedAtSeconds, startSeconds, endSeconds);
+}
+
 function shouldHideActiveTrip(trip, latestTelemetry) {
+  const scheduleLike = {
+    start_time: trip?.schedules?.start_time || trip?.start_time,
+    end_time: trip?.schedules?.end_time || trip?.end_time,
+  };
+  if (didTripStartOutsideScheduleWindow(trip, scheduleLike)) {
+    return true;
+  }
+
   const lastSeenAt = latestTelemetry?.timestamp || null;
   const isOnline = isTelemetryOnline(lastSeenAt);
   if (isOnline) return false;
@@ -270,6 +328,7 @@ function normalizeActiveTripForResponse(trip) {
   const schedule = trip?.schedules
     ? {
         ...trip.schedules,
+        schedule_type: 'daily',
         routes: normalizeRoute(trip.schedules.routes),
         buses: normalizeBus(trip.schedules.buses) || bus,
         drivers: normalizeDriver(trip.schedules.drivers) || driver,
@@ -278,6 +337,7 @@ function normalizeActiveTripForResponse(trip) {
 
   return {
     ...trip,
+    schedule_type: 'daily',
     route_id: trip?.route_id || route?.id || null,
     bus_id: trip?.bus_id || bus?.id || null,
     driver_id: trip?.driver_id || driver?.id || null,
@@ -291,15 +351,13 @@ function normalizeActiveTripForResponse(trip) {
 async function findScheduleAssignmentConflicts({
   driverId,
   busId,
-  scheduleType,
   excludeScheduleId,
 }) {
-  if (!scheduleType || (!driverId && !busId)) return [];
+  if (!driverId && !busId) return [];
 
   let query = supabaseAdmin
     .from('schedules')
-    .select('id, driver_id, bus_id, schedule_type')
-    .eq('schedule_type', scheduleType)
+    .select('id, driver_id, bus_id')
     .limit(20);
 
   if (excludeScheduleId) {
@@ -319,15 +377,14 @@ async function findScheduleAssignmentConflicts({
   return data || [];
 }
 
-function buildScheduleConflictMessage(conflicts, { driverId, busId, scheduleType }) {
+function buildScheduleConflictMessage(conflicts, { driverId, busId }) {
   const driverConflict = conflicts.find((schedule) => schedule.driver_id === driverId);
   const busConflict = conflicts.find((schedule) => schedule.bus_id === busId);
-  const shiftLabel = scheduleType || 'selected';
 
   if (driverConflict && busConflict) {
     return {
-      code: 'DRIVER_AND_BUS_ALREADY_ASSIGNED_IN_SHIFT',
-      message: `Selected driver and bus are already assigned in the ${shiftLabel} shift.`,
+      code: 'DRIVER_AND_BUS_ALREADY_ASSIGNED',
+      message: 'Selected driver and bus are already assigned.',
       driver_schedule_id: driverConflict.id,
       bus_schedule_id: busConflict.id,
     };
@@ -335,16 +392,16 @@ function buildScheduleConflictMessage(conflicts, { driverId, busId, scheduleType
 
   if (driverConflict) {
     return {
-      code: 'DRIVER_ALREADY_ASSIGNED_IN_SHIFT',
-      message: `Selected driver is already assigned in the ${shiftLabel} shift.`,
+      code: 'DRIVER_ALREADY_ASSIGNED',
+      message: 'Selected driver is already assigned.',
       driver_schedule_id: driverConflict.id,
     };
   }
 
   if (busConflict) {
     return {
-      code: 'BUS_ALREADY_ASSIGNED_IN_SHIFT',
-      message: `Selected bus is already assigned in the ${shiftLabel} shift.`,
+      code: 'BUS_ALREADY_ASSIGNED',
+      message: 'Selected bus is already assigned.',
       bus_schedule_id: busConflict.id,
     };
   }
@@ -352,18 +409,16 @@ function buildScheduleConflictMessage(conflicts, { driverId, busId, scheduleType
   return null;
 }
 
-async function findActiveTripShiftConflicts({
+async function findActiveTripConflicts({
   driverId,
   busId,
-  scheduleType,
   excludeScheduleId,
 }) {
-  if (!scheduleType || (!driverId && !busId)) return [];
+  if (!driverId && !busId) return [];
 
   let query = supabaseAdmin
     .from('trips')
-    .select('id, schedule_id, driver_id, bus_id, schedule_type, status, started_at')
-    .eq('schedule_type', scheduleType)
+    .select('id, schedule_id, driver_id, bus_id, status, started_at')
     .in('status', ACTIVE_TRIP_STATUSES)
     .order('started_at', { ascending: false })
     .limit(20);
@@ -385,15 +440,14 @@ async function findActiveTripShiftConflicts({
   return data || [];
 }
 
-function buildActiveTripShiftConflictMessage(conflicts, { driverId, busId, scheduleType }) {
+function buildActiveTripConflictMessage(conflicts, { driverId, busId }) {
   const driverConflict = conflicts.find((trip) => trip.driver_id === driverId);
   const busConflict = conflicts.find((trip) => trip.bus_id === busId);
-  const shiftLabel = scheduleType || 'selected';
 
   if (driverConflict && busConflict) {
     return {
-      code: 'DRIVER_AND_BUS_ACTIVE_IN_SHIFT',
-      message: `Selected driver and bus already have an active ${shiftLabel} trip. End that trip before starting another one.`,
+      code: 'DRIVER_AND_BUS_ACTIVE',
+      message: 'Selected driver and bus already have an active trip. End that trip before starting another one.',
       driver_trip_id: driverConflict.id,
       bus_trip_id: busConflict.id,
     };
@@ -401,16 +455,16 @@ function buildActiveTripShiftConflictMessage(conflicts, { driverId, busId, sched
 
   if (driverConflict) {
     return {
-      code: 'DRIVER_ACTIVE_IN_SHIFT',
-      message: `Selected driver already has an active ${shiftLabel} trip. End that trip before starting another one.`,
+      code: 'DRIVER_ACTIVE',
+      message: 'Selected driver already has an active trip. End that trip before starting another one.',
       driver_trip_id: driverConflict.id,
     };
   }
 
   if (busConflict) {
     return {
-      code: 'BUS_ACTIVE_IN_SHIFT',
-      message: `Selected bus already has an active ${shiftLabel} trip. End that trip before starting another one.`,
+      code: 'BUS_ACTIVE',
+      message: 'Selected bus already has an active trip. End that trip before starting another one.',
       bus_trip_id: busConflict.id,
     };
   }
@@ -443,35 +497,30 @@ async function fetchLatestTelemetryByTripIds(tripIds) {
   return map;
 }
 
-async function fetchStopsByRouteShiftPairs(trips) {
+async function fetchStopsByRouteIds(trips) {
   const keyToStops = {};
-  const pairs = new Map();
+  const routeIds = new Set();
 
   for (const trip of trips || []) {
     const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
-    const shift = trip.schedule_type;
-    if (!routeId || !shift) continue;
-    pairs.set(`${routeId}::${shift}`, { routeId, shift });
+    if (!routeId) continue;
+    routeIds.add(routeId);
   }
 
-  for (const [, pair] of pairs) {
+  for (const routeId of routeIds) {
     const { data, error } = await supabaseAdmin
       .from('stops')
-      .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
-      .eq('route_id', pair.routeId)
-      .eq('schedule_type', pair.shift)
+      .select('id, stop_name, latitude, longitude, arrival_time')
+      .eq('route_id', routeId)
       .order('arrival_time', { ascending: true });
 
     if (error) {
-      console.error(
-        `[API] Failed to fetch stops for route ${pair.routeId} and shift ${pair.shift}:`,
-        error.message
-      );
-      keyToStops[`${pair.routeId}::${pair.shift}`] = [];
+      console.error(`[API] Failed to fetch stops for route ${routeId}:`, error.message);
+      keyToStops[routeId] = [];
       continue;
     }
 
-    keyToStops[`${pair.routeId}::${pair.shift}`] = data || [];
+    keyToStops[routeId] = data || [];
   }
 
   return keyToStops;
@@ -497,7 +546,6 @@ async function fetchTripLiveContext(tripId) {
       id,
       route_id,
       status,
-      schedule_type,
       schedule_id,
       trip_route:route_id (*),
       schedules:schedule_id (
@@ -521,9 +569,8 @@ async function fetchTripLiveContext(tripId) {
   if (routeId) {
     const { data: stopData, error: stopError } = await supabaseAdmin
       .from('stops')
-      .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
+      .select('id, stop_name, latitude, longitude, arrival_time')
       .eq('route_id', routeId)
-      .eq('schedule_type', trip.schedule_type)
       .order('arrival_time', { ascending: true });
 
     if (stopError) throw stopError;
@@ -546,7 +593,7 @@ async function buildTripLiveRouteResponse(tripId, options = {}) {
   const snapshot = await buildLiveRouteSnapshot({
     tripId,
     routeRecord: context.trip.trip_route || context.trip.schedules?.routes || {},
-    scheduleType: context.trip.schedule_type,
+    scheduleType: 'daily',
     stops: context.stops,
     latestTelemetry: context.latestTelemetry,
     includeFullGeometry: options.includeFullGeometry === true,
@@ -556,7 +603,7 @@ async function buildTripLiveRouteResponse(tripId, options = {}) {
   return {
     trip_id: context.trip.id,
     trip_status: context.trip.status,
-    schedule_type: context.trip.schedule_type,
+    schedule_type: 'daily',
     ...snapshot,
   };
 }
@@ -583,7 +630,6 @@ async function fetchCurrentDriverAssignment(driverId) {
       bus_id,
       driver_id,
       status,
-      schedule_type,
       started_at,
       trip_route:route_id (id, route_name, start_location, end_location),
       buses:bus_id (id, bus_number, bus_name, capacity),
@@ -623,12 +669,13 @@ async function fetchCurrentDriverAssignment(driverId) {
       id: activeTrip.id,
       schedule_id: activeTrip.schedule_id,
       status: activeTrip.status,
-      schedule_type: activeTrip.schedule_type,
+      schedule_type: 'daily',
       start_time: activeTrip.schedules?.start_time,
       end_time: activeTrip.schedules?.end_time,
       routes: route,
       buses: bus,
       source: 'trip',
+      can_start_now: true,
     });
   }
 
@@ -636,7 +683,6 @@ async function fetchCurrentDriverAssignment(driverId) {
     .from('schedules')
     .select(`
       id,
-      schedule_type,
       start_time,
       end_time,
       routes:route_id (id, route_name, start_location, end_location),
@@ -654,12 +700,14 @@ async function fetchCurrentDriverAssignment(driverId) {
     id: schedule.id,
     schedule_id: schedule.id,
     status: 'assigned',
-    schedule_type: schedule.schedule_type,
+    schedule_type: 'daily',
     start_time: schedule.start_time,
     end_time: schedule.end_time,
     routes: schedule.routes,
     buses: schedule.buses,
     source: 'schedule',
+    can_start_now: canStartScheduleNow(schedule),
+    schedule_window_message: buildScheduleWindowMessage(schedule),
   });
 }
 
@@ -671,7 +719,6 @@ async function fetchScheduleForTripStart(scheduleId) {
       route_id,
       bus_id,
       driver_id,
-      schedule_type,
       start_time,
       end_time,
       routes:route_id (id, route_name, start_location, end_location),
@@ -737,8 +784,7 @@ router.get('/routes', async (req, res) => {
 
 router.post('/routes/:id/rebuild-geometry', async (req, res) => {
   try {
-    const scheduleType = req.body?.schedule_type || req.query?.schedule_type || undefined;
-    const result = await rebuildRouteGeometryForRoute(req.params.id, { scheduleType });
+    const result = await rebuildRouteGeometryForRoute(req.params.id);
     return res.json({
       ok: true,
       ...result,
@@ -751,7 +797,7 @@ router.post('/routes/:id/rebuild-geometry', async (req, res) => {
 });
 
 router.get('/stops', async (req, res) => {
-  const { route_id, schedule_type } = req.query;
+  const { route_id } = req.query;
 
   let query = supabaseAdmin
     .from('stops')
@@ -765,15 +811,13 @@ router.get('/stops', async (req, res) => {
       schedule_type,
       routes:route_id (id, route_name, start_location, end_location)
     `)
-    .order('schedule_type', { ascending: true })
     .order('arrival_time', { ascending: true });
 
   if (route_id) query = query.eq('route_id', route_id);
-  if (schedule_type) query = query.eq('schedule_type', schedule_type);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  return res.json(data || []);
+  return res.json((data || []).map((stop) => ({ ...stop, schedule_type: 'daily' })));
 });
 
 router.get('/buses', async (req, res) => {
@@ -788,7 +832,7 @@ router.get('/buses', async (req, res) => {
 });
 
 router.get('/schedules', async (req, res) => {
-  const { driver_id, schedule_type, route_id } = req.query;
+  const { driver_id, route_id } = req.query;
 
   let query = supabaseAdmin
     .from('schedules')
@@ -807,19 +851,18 @@ router.get('/schedules', async (req, res) => {
     .order('start_time', { ascending: true });
 
   if (driver_id) query = query.eq('driver_id', driver_id);
-  if (schedule_type) query = query.eq('schedule_type', schedule_type);
   if (route_id) query = query.eq('route_id', route_id);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  return res.json(data || []);
+  return res.json((data || []).map((schedule) => ({ ...schedule, schedule_type: 'daily' })));
 });
 
 router.post('/schedules/validate-assignment', async (req, res) => {
-  const { driver_id, bus_id, schedule_id, schedule_type } = req.body || {};
-  if (!driver_id || !bus_id || !schedule_type) {
+  const { driver_id, bus_id, schedule_id } = req.body || {};
+  if (!driver_id || !bus_id) {
     return res.status(400).json({
-      error: 'driver_id, bus_id, and schedule_type are required',
+      error: 'driver_id and bus_id are required',
     });
   }
 
@@ -827,14 +870,12 @@ router.post('/schedules/validate-assignment', async (req, res) => {
     const conflicts = await findScheduleAssignmentConflicts({
       driverId: driver_id,
       busId: bus_id,
-      scheduleType: schedule_type,
       excludeScheduleId: schedule_id || undefined,
     });
 
     const conflictPayload = buildScheduleConflictMessage(conflicts, {
       driverId: driver_id,
       busId: bus_id,
-      scheduleType: schedule_type,
     });
 
     if (conflictPayload) {
@@ -863,6 +904,13 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       return res.status(403).json({ error: 'This schedule is not assigned to you' });
     }
 
+    if (!canStartScheduleNow(schedule)) {
+      return res.status(409).json({
+        error: buildScheduleWindowMessage(schedule),
+        code: 'SCHEDULE_NOT_STARTABLE_YET',
+      });
+    }
+
     const { data: existingTrips, error: existingTripsError } = await supabaseAdmin
       .from('trips')
       .select('id, schedule_id, status, started_at')
@@ -877,27 +925,39 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
 
     const existingTrip = (existingTrips || [])[0];
     if (existingTrip) {
-      return res.json(existingTrip);
+      if (didTripStartOutsideScheduleWindow(existingTrip, schedule)) {
+        const { error: invalidateError } = await supabaseAdmin
+          .from('trips')
+          .update({
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', existingTrip.id);
+
+        if (invalidateError) {
+          throw invalidateError;
+        }
+      } else {
+        return res.json(existingTrip);
+      }
     }
 
-    const activeShiftConflicts = await findActiveTripShiftConflicts({
+    const activeTripConflicts = await findActiveTripConflicts({
       driverId: schedule.driver_id,
       busId: schedule.bus_id,
-      scheduleType: schedule.schedule_type,
       excludeScheduleId: schedule.id,
     });
 
-    const activeShiftConflictPayload = buildActiveTripShiftConflictMessage(
-      activeShiftConflicts,
+    const activeTripConflictPayload = buildActiveTripConflictMessage(
+      activeTripConflicts,
       {
         driverId: schedule.driver_id,
         busId: schedule.bus_id,
-        scheduleType: schedule.schedule_type,
       }
     );
 
-    if (activeShiftConflictPayload) {
-      return res.status(409).json(activeShiftConflictPayload);
+    if (activeTripConflictPayload) {
+      return res.status(409).json(activeTripConflictPayload);
     }
 
     const insertPayload = {
@@ -905,7 +965,7 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
       route_id: schedule.route_id,
       bus_id: schedule.bus_id,
       driver_id: schedule.driver_id,
-      schedule_type: schedule.schedule_type,
+      schedule_type: 'daily',
       status: 'started',
       started_at: new Date().toISOString(),
       paused_at: null,
@@ -930,17 +990,23 @@ router.post('/trips', requireDriverAuth, async (req, res) => {
     if (error) {
       if (error.code === '23505') {
         const duplicateConstraint = error.message || '';
-        if (duplicateConstraint.includes('uniq_active_trip_per_bus_shift')) {
+        if (
+          duplicateConstraint.includes('uniq_active_trip_per_bus_daily') ||
+          duplicateConstraint.includes('uniq_active_trip_per_bus_shift')
+        ) {
           return res.status(409).json({
-            code: 'BUS_ACTIVE_IN_SHIFT',
-            message: `Selected bus already has an active ${schedule.schedule_type} trip. End that trip before starting another one.`,
+            code: 'BUS_ACTIVE',
+            message: 'Selected bus already has an active trip. End that trip before starting another one.',
           });
         }
 
-        if (duplicateConstraint.includes('uniq_active_trip_per_driver_shift')) {
+        if (
+          duplicateConstraint.includes('uniq_active_trip_per_driver_daily') ||
+          duplicateConstraint.includes('uniq_active_trip_per_driver_shift')
+        ) {
           return res.status(409).json({
-            code: 'DRIVER_ACTIVE_IN_SHIFT',
-            message: `Selected driver already has an active ${schedule.schedule_type} trip. End that trip before starting another one.`,
+            code: 'DRIVER_ACTIVE',
+            message: 'Selected driver already has an active trip. End that trip before starting another one.',
           });
         }
 
@@ -1002,19 +1068,19 @@ router.get('/trips/active', async (req, res) => {
     const visibleTrips = trips.filter(
       (trip) => !shouldHideActiveTrip(trip, telemetryMap[trip.id] || null)
     );
-    const stopsMap = await fetchStopsByRouteShiftPairs(visibleTrips);
+    const stopsMap = await fetchStopsByRouteIds(visibleTrips);
 
     const enriched = await Promise.all(
       visibleTrips.map(async (trip) => {
         const routeId = trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id;
-        const stopKey = routeId ? `${routeId}::${trip.schedule_type}` : '';
+        const stopKey = routeId || '';
         const latestTelemetry = telemetryMap[trip.id] || null;
 
         try {
           const snapshot = await buildLiveRouteSnapshot({
             tripId: trip.id,
             routeRecord: trip.trip_route || trip.schedules?.routes || {},
-            scheduleType: trip.schedule_type,
+            scheduleType: 'daily',
             stops: stopsMap[stopKey] || [],
             latestTelemetry,
             includeFullGeometry: false,

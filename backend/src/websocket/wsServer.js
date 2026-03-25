@@ -24,7 +24,7 @@ const jwt = require('jsonwebtoken');
 const { supabaseAdmin } = require('../config/supabase');
 const { ACTIVE_TRIP_STATUSES } = require('../config/tripRules');
 
-// Map of websocket → { tripId, driverId, authenticated, scheduleType }
+// Map of websocket → { tripId, driverId, authenticated }
 const clientMeta = new WeakMap();
 
 function setupWebSocketServer(server) {
@@ -32,7 +32,7 @@ function setupWebSocketServer(server) {
 
   wss.on('connection', (ws) => {
     console.log('[WS] New connection');
-    clientMeta.set(ws, { authenticated: false, tripId: null, driverId: null, scheduleType: null });
+    clientMeta.set(ws, { authenticated: false, tripId: null, driverId: null });
 
     ws.on('message', async (rawMsg) => {
       let msg;
@@ -61,7 +61,7 @@ function setupWebSocketServer(server) {
           const { data: trip, error: tripErr } = await supabaseAdmin
             .from('trips')
             .select(`
-              id, route_id, status, driver_id, schedule_type,
+              id, route_id, status, driver_id,
               trip_route:route_id (id, start_location, end_location),
               schedules:schedule_id (
                 routes:route_id (id, start_location, end_location),
@@ -83,19 +83,17 @@ function setupWebSocketServer(server) {
             return ws.send(JSON.stringify({ type: 'AUTH_ERR', payload: { reason: 'trip_driver_mismatch' } }));
           }
 
-          // Fetch stops for this route + shift for ETA calculations
+          // Fetch ordered stops for this route for ETA calculations
           const { data: stops } = await supabaseAdmin
             .from('stops')
-            .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
+            .select('id, stop_name, latitude, longitude, arrival_time')
             .eq('route_id', trip.route_id || trip.trip_route?.id || trip.schedules?.routes?.id)
-            .eq('schedule_type', trip.schedule_type)
             .order('arrival_time', { ascending: true });
 
           clientMeta.set(ws, {
             authenticated: true,
             tripId,
             driverId,
-            scheduleType: trip.schedule_type,
           });
 
           ws.send(JSON.stringify({
@@ -105,10 +103,9 @@ function setupWebSocketServer(server) {
               route: trip.trip_route || trip.schedules?.routes,
               bus: trip.schedules?.buses,
               stops: stops || [],
-              scheduleType: trip.schedule_type,
             },
           }));
-          console.log(`[WS] Driver ${driverId} authenticated for trip ${tripId} (${trip.schedule_type} shift)`);
+          console.log(`[WS] Driver ${driverId} authenticated for trip ${tripId}`);
         } catch (e) {
           console.error('[WS] Auth error:', e.message);
           ws.send(JSON.stringify({ type: 'AUTH_ERR', payload: { reason: 'invalid_token' } }));

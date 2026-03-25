@@ -21,7 +21,6 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _loadError;
   String? _fromStopId;
   String? _toStopId;
-  String _shift = 'morning';
 
   static const String _recentSearchesKey = 'student_recent_searches';
 
@@ -49,24 +48,23 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-  Future<void> _saveRecentSearch(Map<String, dynamic> fromStop, Map<String, dynamic> toStop) async {
+  Future<void> _saveRecentSearch(
+      Map<String, dynamic> fromStop, Map<String, dynamic> toStop) async {
     try {
       final searchEntry = {
         'from_id': fromStop['id'],
         'from_name': fromStop['stop_name'],
         'to_id': toStop['id'],
         'to_name': toStop['stop_name'],
-        'shift': _shift,
       };
 
-      final filteredList = _recentSearches.where((s) => 
-        !(s['from_id'] == searchEntry['from_id'] && 
-          s['to_id'] == searchEntry['to_id'] && 
-          s['shift'] == searchEntry['shift'])
-      ).toList();
+      final filteredList = _recentSearches
+          .where((s) => !(s['from_id'] == searchEntry['from_id'] &&
+              s['to_id'] == searchEntry['to_id']))
+          .toList();
 
       filteredList.insert(0, searchEntry);
-      
+
       if (filteredList.length > 5) {
         filteredList.removeRange(5, filteredList.length);
       }
@@ -139,18 +137,16 @@ class _SearchScreenState extends State<SearchScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Pickup and destination must belong to the same route for the selected shift.',
+            'Pickup and destination must belong to the same route.',
           ),
         ),
       );
       return;
     }
 
-    final routeShiftStops = _stops
+    final routeStops = _stops
         .where(
-          (stop) =>
-              stop['route_id']?.toString() == fromRouteId &&
-              stop['schedule_type']?.toString() == _shift,
+          (stop) => stop['route_id']?.toString() == fromRouteId,
         )
         .toList()
       ..sort(
@@ -158,18 +154,18 @@ class _SearchScreenState extends State<SearchScreen> {
             .toString()
             .compareTo((b['arrival_time'] ?? '').toString()),
       );
-    final fromIndex = routeShiftStops.indexWhere(
+    final fromIndex = routeStops.indexWhere(
       (stop) => stop['id']?.toString() == _fromStopId,
     );
-    final toIndex = routeShiftStops.indexWhere(
+    final toIndex = routeStops.indexWhere(
       (stop) => stop['id']?.toString() == _toStopId,
     );
 
     if (fromIndex < 0 || toIndex < 0 || fromIndex >= toIndex) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text(
-            'Choose pickup and destination in the valid $_shift route order.',
+            'Choose pickup and destination in the valid route order.',
           ),
         ),
       );
@@ -184,7 +180,6 @@ class _SearchScreenState extends State<SearchScreen> {
         builder: (context) => BusAvailabilityScreen(
           fromStop: fromStop,
           toStop: toStop,
-          shift: _shift,
         ),
       ),
     );
@@ -220,14 +215,19 @@ class _SearchScreenState extends State<SearchScreen> {
                         height: 44,
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
-                            colors: [Color(0xFFFACC15), Color(0xFFF59E0B), Color(0xFFEA580C)],
+                            colors: [
+                              Color(0xFFFACC15),
+                              Color(0xFFF59E0B),
+                              Color(0xFFEA580C)
+                            ],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                              color: const Color(0xFFF59E0B)
+                                  .withValues(alpha: 0.3),
                               blurRadius: 12,
                               offset: const Offset(0, 4),
                             ),
@@ -235,7 +235,8 @@ class _SearchScreenState extends State<SearchScreen> {
                           border: Border.all(color: Colors.white, width: 2),
                         ),
                         child: const Center(
-                          child: Icon(LucideIcons.bus, color: Colors.white, size: 22),
+                          child: Icon(LucideIcons.bus,
+                              color: Colors.white, size: 22),
                         ),
                       ),
                       const Spacer(),
@@ -297,8 +298,6 @@ class _SearchScreenState extends State<SearchScreen> {
                               onChanged: (val) =>
                                   setState(() => _toStopId = val),
                             ),
-                            const SizedBox(height: 16),
-                            _buildShiftToggle(),
                             const SizedBox(height: 48),
                             SizedBox(
                               width: double.infinity,
@@ -391,19 +390,21 @@ class _SearchScreenState extends State<SearchScreen> {
     required String? value,
     required Function(String?) onChanged,
   }) {
-    final shiftStops = _stops
-        .where((s) => s['schedule_type'] == _shift)
-        .cast<Map<String, dynamic>>()
-        .toList();
+    final routeStops = _stops.cast<Map<String, dynamic>>().toList()
+      ..sort(
+        (a, b) => (a['arrival_time'] ?? '')
+            .toString()
+            .compareTo((b['arrival_time'] ?? '').toString()),
+      );
     final stopNameCounts = <String, int>{};
-    for (final stop in shiftStops) {
+    for (final stop in routeStops) {
       final key = (stop['stop_name'] ?? '').toString().trim().toLowerCase();
       stopNameCounts[key] = (stopNameCounts[key] ?? 0) + 1;
     }
 
     // Prevent assertion crash if the currently selected value is NOT in the filtered dropdown list
     final bool hasValidValue =
-        value != null && shiftStops.any((s) => s['id'] == value);
+        value != null && routeStops.any((s) => s['id'] == value);
     final safeValue = hasValidValue ? value : null;
 
     return Container(
@@ -442,7 +443,7 @@ class _SearchScreenState extends State<SearchScreen> {
             hint: const Text('Choose a stop...'),
             icon: const Icon(LucideIcons.chevronDown, size: 16),
             onChanged: onChanged,
-            items: shiftStops.map((stop) {
+            items: routeStops.map((stop) {
               return DropdownMenuItem<String>(
                 value: stop['id'],
                 child: Align(
@@ -463,86 +464,13 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildShiftToggle() {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          _shiftToggleItem('morning', LucideIcons.sun, 'Morning Shift'),
-          _shiftToggleItem('evening', LucideIcons.moon, 'Evening Shift'),
-        ],
-      ),
-    );
-  }
-
-  Widget _shiftToggleItem(String value, IconData icon, String label) {
-    final active = _shift == value;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          if (!active) {
-            setState(() {
-              _shift = value;
-              _fromStopId = null;
-              _toStopId = null;
-            });
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: active ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: active
-                ? [
-                    BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.05),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2))
-                  ]
-                : null,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon,
-                  size: 16,
-                  color: active
-                      ? const Color(0xFFF59E0B)
-                      : const Color(0xFF64748B)),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: active
-                        ? const Color(0xFF1E293B)
-                        : const Color(0xFF64748B),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   String _selectedStopName(String id) {
     final match = _stops.where((s) => s['id'] == id);
     if (match.isEmpty) return 'Unknown stop';
 
     final stop = Map<String, dynamic>.from(match.first);
     final stopNameCounts = <String, int>{};
-    for (final item in _stops.where((s) => s['schedule_type'] == stop['schedule_type'])) {
+    for (final item in _stops) {
       final key = (item['stop_name'] ?? '').toString().trim().toLowerCase();
       stopNameCounts[key] = (stopNameCounts[key] ?? 0) + 1;
     }
@@ -633,21 +561,22 @@ class _SearchScreenState extends State<SearchScreen> {
             separatorBuilder: (context, index) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
               final search = _recentSearches[index];
-              final isMorning = search['shift'] == 'morning';
               return GestureDetector(
                 onTap: () {
-                  final fromExists = _stops.any((s) => s['id'] == search['from_id']);
-                  final toExists = _stops.any((s) => s['id'] == search['to_id']);
+                  final fromExists =
+                      _stops.any((s) => s['id'] == search['from_id']);
+                  final toExists =
+                      _stops.any((s) => s['id'] == search['to_id']);
 
                   if (!fromExists || !toExists) {
-                     ScaffoldMessenger.of(context).showSnackBar(
-                       const SnackBar(content: Text('Saved route is no longer available.')),
-                     );
-                     return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Saved route is no longer available.')),
+                    );
+                    return;
                   }
 
                   setState(() {
-                    _shift = search['shift'] ?? 'morning';
                     _fromStopId = search['from_id'];
                     _toStopId = search['to_id'];
                   });
@@ -674,10 +603,10 @@ class _SearchScreenState extends State<SearchScreen> {
                     children: [
                       Row(
                         children: [
-                          Icon(
-                            isMorning ? LucideIcons.sun : LucideIcons.moon,
+                          const Icon(
+                            LucideIcons.history,
                             size: 14,
-                            color: isMorning ? const Color(0xFFF59E0B) : const Color(0xFF6366F1),
+                            color: Color(0xFFF59E0B),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -697,12 +626,14 @@ class _SearchScreenState extends State<SearchScreen> {
                       const SizedBox(height: 4),
                       const Padding(
                         padding: EdgeInsets.only(left: 6),
-                        child: Icon(LucideIcons.arrowDown, size: 14, color: Color(0xFFCBD5E1)),
+                        child: Icon(LucideIcons.arrowDown,
+                            size: 14, color: Color(0xFFCBD5E1)),
                       ),
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          const Icon(LucideIcons.mapPin, size: 14, color: Colors.transparent),
+                          const Icon(LucideIcons.mapPin,
+                              size: 14, color: Colors.transparent),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(

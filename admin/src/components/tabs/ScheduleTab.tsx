@@ -6,9 +6,10 @@ import { Schedule, Route, Bus, Driver } from '../../types';
 import { useStore } from '../../store';
 import { TableSkeleton } from '../ui/Skeleton';
 import { ConfirmModal } from '../ui/Modal';
-import { Calendar, Clock, UserCheck, Trash2, Edit2, Link as LinkIcon, Compass, Activity, Sun, Moon, SearchX, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, Clock, UserCheck, Trash2, Edit2, Link as LinkIcon, Compass, Activity, SearchX, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+const DAILY_SCHEDULE_TYPE = 'daily' as const;
 
 const ScheduleTab = () => {
   const [schedules, setSchedules] = useState<any[]>([]);
@@ -25,21 +26,20 @@ const ScheduleTab = () => {
 
   const selectedRouteId = watch('route_id');
 
-  const ensureShiftRouteReady = async (routeId: string, scheduleType: Schedule['schedule_type']) => {
+  const ensureRouteReady = async (routeId: string) => {
     const { count, error } = await supabase
       .from('stops')
       .select('id', { count: 'exact', head: true })
-      .eq('route_id', routeId)
-      .eq('schedule_type', scheduleType);
+      .eq('route_id', routeId);
 
     if (error) throw error;
     if ((count || 0) < 2) {
-      throw new Error(`Add at least 2 ${scheduleType} stops before saving this schedule.`);
+      throw new Error('Add at least 2 stops before saving this schedule.');
     }
 
-    const geometryResult = await rebuildRouteGeometry(routeId, scheduleType);
+    const geometryResult = await rebuildRouteGeometry(routeId);
     if (!geometryResult.ok) {
-      throw new Error(geometryResult.message || `Unable to build ${scheduleType} route geometry.`);
+      throw new Error(geometryResult.message || 'Unable to build route geometry.');
     }
   };
 
@@ -71,17 +71,17 @@ const ScheduleTab = () => {
 
   const onSubmit = async (data: Schedule) => {
     setIsSaving(true);
-    const { id, created_at, ...updateData } = data as any;
+    const payload = { ...data, schedule_type: DAILY_SCHEDULE_TYPE };
+    const { id, created_at, ...updateData } = payload as any;
     
     try {
       const validationRes = await fetch(`${TRACKING_API_BASE}/schedules/validate-assignment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          driver_id: data.driver_id,
-          bus_id: data.bus_id,
+          driver_id: payload.driver_id,
+          bus_id: payload.bus_id,
           schedule_id: editingId || null,
-          schedule_type: data.schedule_type,
         }),
       });
 
@@ -90,11 +90,11 @@ const ScheduleTab = () => {
         throw new Error(
           payload.message ||
             payload.error ||
-            'Selected driver or bus is already assigned in this shift',
+            'Selected driver or bus is already assigned',
         );
       }
 
-      await ensureShiftRouteReady(data.route_id, data.schedule_type);
+      await ensureRouteReady(payload.route_id);
 
       if (editingId) {
         const { error } = await supabase.from('schedules').update(updateData).eq('id', editingId);
@@ -102,7 +102,7 @@ const ScheduleTab = () => {
         addToast('Mission updated');
         setEditingId(null);
       } else {
-        const { error } = await supabase.from('schedules').insert([data]);
+        const { error } = await supabase.from('schedules').insert([payload]);
         if (error) throw error;
         addToast('Mission assigned');
       }
@@ -121,7 +121,7 @@ const ScheduleTab = () => {
       route_id: schedule.route_id,
       bus_id: schedule.bus_id,
       driver_id: schedule.driver_id,
-      schedule_type: schedule.schedule_type,
+      schedule_type: DAILY_SCHEDULE_TYPE,
       start_time: schedule.start_time,
       end_time: schedule.end_time
     });
@@ -211,23 +211,10 @@ const ScheduleTab = () => {
             {/* Section 4: Block Type */}
             <div className="space-y-4">
                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100 pb-1 flex items-center gap-2">
-                  <Activity size={10} /> Mission Block
+                  <Activity size={10} /> Daily Service
                </h3>
-               <div className="grid grid-cols-2 gap-4">
-                  <label className="relative cursor-pointer transition-all active:scale-95 group">
-                     <input type="radio" {...register('schedule_type', { required: 'Block type required' })} value="morning" className="peer sr-only" />
-                     <div className="peer-checked:bg-gray-900 peer-checked:text-white bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col items-center gap-2 group-hover:bg-gray-100 transition-colors shadow-sm">
-                        <Sun size={18} />
-                        <span className="text-[10px] font-black uppercase tracking-widest leading-none">Morning Shift</span>
-                     </div>
-                  </label>
-                  <label className="relative cursor-pointer transition-all active:scale-95 group">
-                     <input type="radio" {...register('schedule_type', { required: 'Block type required' })} value="evening" className="peer sr-only" />
-                     <div className="peer-checked:bg-gray-900 peer-checked:text-white bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col items-center gap-2 group-hover:bg-gray-100 transition-colors shadow-sm">
-                        <Moon size={18} />
-                        <span className="text-[10px] font-black uppercase tracking-widest leading-none">Evening Shift</span>
-                     </div>
-                  </label>
+               <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs font-black uppercase tracking-widest text-gray-700 text-center">
+                  One Daily Trip
                </div>
             </div>
           </div>
@@ -287,13 +274,13 @@ const ScheduleTab = () => {
                 schedules.map((s) => (
                   <tr key={s.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4">
-                       <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold relative transition-all border shadow-sm ${s.schedule_type === 'morning' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-900 text-white border-gray-800'}`}>
-                          {s.schedule_type === 'morning' ? <Sun size={18} /> : <Moon size={18} />}
+                       <div className="w-10 h-10 rounded-lg flex items-center justify-center font-bold relative transition-all border shadow-sm bg-gray-900 text-white border-gray-800">
+                          <Calendar size={18} />
                        </div>
                     </td>
                     <td className="px-6 py-4">
                        <p className="text-xs font-black text-gray-900 uppercase tracking-widest leading-none mb-1 italic">{s.routes?.start_location} ➝ {s.routes?.end_location}</p>
-                       <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] leading-none">{s.schedule_type} link enabled</p>
+                       <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] leading-none">daily link enabled</p>
                     </td>
                     <td className="px-6 py-4 space-y-1">
                        <div className="flex items-center gap-2">

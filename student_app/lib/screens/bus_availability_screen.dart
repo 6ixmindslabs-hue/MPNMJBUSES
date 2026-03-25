@@ -8,12 +8,10 @@ import 'live_tracking_screen.dart';
 class BusAvailabilityScreen extends StatefulWidget {
   final Map<String, dynamic> fromStop;
   final Map<String, dynamic> toStop;
-  final String shift;
 
   const BusAvailabilityScreen({
     required this.fromStop,
     required this.toStop,
-    required this.shift,
     super.key,
   });
 
@@ -63,7 +61,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
 
       final schedulesResponse = await http.get(
         Uri.parse(
-          '${AppConfig.effectiveApiBase}/schedules?route_id=$routeId&schedule_type=${widget.shift.toLowerCase().trim()}',
+          '${AppConfig.effectiveApiBase}/schedules?route_id=$routeId',
         ),
       );
 
@@ -123,8 +121,6 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         (widget.fromStop['route_id'] ?? '').toString().trim();
     final destinationRouteId =
         (widget.toStop['route_id'] ?? '').toString().trim();
-    final selectedShift = widget.shift.toLowerCase().trim();
-
     final schedule = Map<String, dynamic>.from(item['schedules'] ?? const {});
     final route = Map<String, dynamic>.from(
       item['routes'] ?? schedule['routes'] ?? item['trip_route'] ?? const {},
@@ -132,17 +128,13 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
 
     final itemRouteId =
         (item['route_id'] ?? route['id'] ?? '').toString().trim();
-    final itemShift = (item['schedule_type'] ?? item['shift'] ?? '')
-        .toString()
-        .toLowerCase()
-        .trim();
 
     final routeMatches = selectedRouteId.isEmpty
         ? destinationRouteId.isEmpty || itemRouteId == destinationRouteId
         : itemRouteId == selectedRouteId &&
             (destinationRouteId.isEmpty || itemRouteId == destinationRouteId);
 
-    return routeMatches && itemShift == selectedShift;
+    return routeMatches;
   }
 
   Map<String, dynamic> _normalizeActiveTrip(Map<String, dynamic> trip) {
@@ -167,7 +159,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       'schedules': {
         ...schedule,
         'id': trip['schedule_id'] ?? schedule['id'],
-        'schedule_type': trip['schedule_type'] ?? schedule['schedule_type'],
+        'schedule_type': 'daily',
         'routes': route,
         'buses': bus,
         'drivers': driver,
@@ -181,7 +173,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
       'route_id': schedule['route_id'],
       'schedule_id': schedule['id'],
       'bus_id': schedule['bus_id'],
-      'schedule_type': schedule['schedule_type'],
+      'schedule_type': 'daily',
       'status': 'scheduled',
       'started_at': null,
       'paused_at': null,
@@ -191,7 +183,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
         'id': schedule['id'],
         'start_time': schedule['start_time'],
         'end_time': schedule['end_time'],
-        'schedule_type': schedule['schedule_type'],
+        'schedule_type': 'daily',
         'routes': schedule['routes'],
         'buses': schedule['buses'],
         'drivers': schedule['drivers'],
@@ -422,7 +414,7 @@ class _BusAvailabilityScreenState extends State<BusAvailabilityScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'There are currently no buses configured\nfor this route and shift.',
+            'There are currently no buses configured\nfor this route.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
           ),

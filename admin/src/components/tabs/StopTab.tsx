@@ -8,10 +8,10 @@ import { ConfirmModal } from '../ui/Modal';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Trash2, Clock, Globe, Edit2, Target, Info, SearchX, ChevronLeft, ChevronRight, Sun, Moon } from 'lucide-react';
+import { Trash2, Clock, Globe, Edit2, Target, Info, SearchX, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 
 // ── Icons ───────────────────────────────────────────────
-const morningIcon = L.divIcon({
+const routeIcon = L.divIcon({
   html: `<div style="width:22px;height:22px;background:#f59e0b;border:2px solid #92400e;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.18);">
            <div style="width:8px;height:8px;background:#fff;border-radius:50%;"></div>
          </div>`,
@@ -19,18 +19,7 @@ const morningIcon = L.divIcon({
   iconSize: [22, 22],
   iconAnchor: [11, 11],
 });
-
-const eveningIcon = L.divIcon({
-  html: `<div style="width:22px;height:22px;background:#1f2937;border:2px solid #111827;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.28);">
-           <div style="width:8px;height:8px;background:#fff;border-radius:50%;"></div>
-         </div>`,
-  className: '',
-  iconSize: [22, 22],
-  iconAnchor: [11, 11],
-});
-
-type ShiftType = 'morning' | 'evening';
-type GeometryTarget = { route_id: string; schedule_type: ShiftType };
+type GeometryTarget = { route_id: string };
 
 // ── Component ────────────────────────────────────────────
 const StopTab = () => {
@@ -40,15 +29,13 @@ const StopTab = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [viewShift, setViewShift] = useState<ShiftType>('morning');
 
   const addToast = useStore((state) => state.addToast);
-  const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<Stop & { schedule_type: ShiftType }>({
-    defaultValues: { schedule_type: 'morning' }
+  const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<Stop>({
+    defaultValues: { schedule_type: 'daily' }
   });
 
   const selectedRouteId = watch('route_id');
-  const selectedShiftType = watch('schedule_type');
   const latValue = watch('latitude');
   const lngValue = watch('longitude');
 
@@ -69,26 +56,24 @@ const StopTab = () => {
       .from('stops')
       .select('*')
       .eq('route_id', rid)
-      .order('schedule_type', { ascending: true })
       .order('arrival_time', { ascending: true });
     if (data) setAllStops(data);
     setLoading(false);
   };
 
-  // Filtered stops for the current viewShift tab
-  const filteredStops = allStops.filter(s => (s as any).schedule_type === viewShift);
+  const filteredStops = allStops;
 
   const rebuildGeometryTargets = async (targets: GeometryTarget[]) => {
     const uniqueTargets = targets.filter((target, index, list) =>
       list.findIndex(
         (entry) =>
           entry.route_id === target.route_id &&
-          entry.schedule_type === target.schedule_type
+          entry.route_id === target.route_id
       ) === index
     );
 
     for (const target of uniqueTargets) {
-      const geometryResult = await rebuildRouteGeometry(target.route_id, target.schedule_type);
+      const geometryResult = await rebuildRouteGeometry(target.route_id);
       if (geometryResult.ok) {
         addToast('Road geometry refreshed');
       } else if (geometryResult.pendingStops && geometryResult.message) {
@@ -97,7 +82,7 @@ const StopTab = () => {
     }
   };
 
-  // Map markers for all stops, coloured by shift
+  // Map markers for the single daily route plan
   const MapHandler = () => {
     useMapEvents({
       click(e) {
@@ -110,7 +95,8 @@ const StopTab = () => {
 
   const onSubmit = async (data: any) => {
     setIsSaving(true);
-    const { id, created_at, routes: _r, ...clean } = data;
+    const { id, created_at, routes: _r, ...rest } = data;
+    const clean = { ...rest, schedule_type: 'daily' };
     const originalStop = editingId
       ? allStops.find((stop) => stop.id === editingId)
       : null;
@@ -123,25 +109,21 @@ const StopTab = () => {
       } else {
         const { error } = await supabase.from('stops').insert([clean]);
         if (error) throw error;
-        addToast(`${clean.schedule_type === 'morning' ? 'Morning' : 'Evening'} checkpoint added`);
+        addToast('Checkpoint added');
       }
       try {
         const targets: GeometryTarget[] = [
           {
             route_id: clean.route_id,
-            schedule_type: clean.schedule_type,
           },
         ];
 
         if (
           originalStop?.route_id &&
-          originalStop?.schedule_type &&
-          (originalStop.route_id !== clean.route_id ||
-            originalStop.schedule_type !== clean.schedule_type)
+          originalStop.route_id !== clean.route_id
         ) {
           targets.push({
             route_id: originalStop.route_id,
-            schedule_type: originalStop.schedule_type as ShiftType,
           });
         }
 
@@ -150,7 +132,7 @@ const StopTab = () => {
         addToast(geometryErr.message || 'Stop saved, but geometry refresh failed.', 'error');
       }
 
-      reset({ route_id: data.route_id, stop_name: '', latitude: null as any, longitude: null as any, arrival_time: '', schedule_type: data.schedule_type });
+      reset({ route_id: data.route_id, stop_name: '', latitude: null as any, longitude: null as any, arrival_time: '', schedule_type: 'daily' });
       fetchStops(data.route_id);
     } catch (err: any) {
       addToast(err.message || 'Action failed', 'error');
@@ -162,7 +144,6 @@ const StopTab = () => {
   const handleEdit = (stop: any) => {
     setEditingId(stop.id!);
     reset(stop);
-    setViewShift(stop.schedule_type || 'morning');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -175,9 +156,9 @@ const StopTab = () => {
       if (error) throw error;
       addToast('Checkpoint removed');
 
-      if (targetStop?.route_id && targetStop?.schedule_type) {
+      if (targetStop?.route_id) {
         try {
-          const geometryResult = await rebuildRouteGeometry(targetStop.route_id, targetStop.schedule_type);
+          const geometryResult = await rebuildRouteGeometry(targetStop.route_id);
           if (geometryResult.ok) {
             addToast('Road geometry refreshed');
           } else if (geometryResult.pendingStops && geometryResult.message) {
@@ -228,34 +209,12 @@ const StopTab = () => {
               </select>
             </div>
 
-            {/* Shift Selector (Morning / Evening) */}
+            {/* Daily Service */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm text-gray-600 font-medium">Shift / Schedule Type</label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="cursor-pointer group">
-                  <input
-                    type="radio"
-                    {...register('schedule_type', { required: 'Shift required' })}
-                    value="morning"
-                    className="peer sr-only"
-                  />
-                  <div className="peer-checked:bg-amber-50 peer-checked:border-amber-400 peer-checked:text-amber-700 bg-gray-50 border border-gray-200 rounded-lg h-[52px] flex items-center justify-center gap-2 group-hover:bg-amber-50/60 transition-all">
-                    <Sun size={16} />
-                    <span className="text-xs font-black uppercase tracking-widest">Morning</span>
-                  </div>
-                </label>
-                <label className="cursor-pointer group">
-                  <input
-                    type="radio"
-                    {...register('schedule_type', { required: 'Shift required' })}
-                    value="evening"
-                    className="peer sr-only"
-                  />
-                  <div className="peer-checked:bg-gray-900 peer-checked:border-gray-800 peer-checked:text-white bg-gray-50 border border-gray-200 rounded-lg h-[52px] flex items-center justify-center gap-2 group-hover:bg-gray-100 transition-all">
-                    <Moon size={16} />
-                    <span className="text-xs font-black uppercase tracking-widest">Evening</span>
-                  </div>
-                </label>
+              <label className="text-sm text-gray-600 font-medium">Service Type</label>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg h-[52px] flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest text-gray-700">
+                <Calendar size={16} />
+                One Daily Route Plan
               </div>
             </div>
 
@@ -339,15 +298,15 @@ const StopTab = () => {
             {latValue && lngValue && (
               <Marker
                 position={[latValue, lngValue]}
-                icon={selectedShiftType === 'morning' ? morningIcon : eveningIcon}
+                icon={routeIcon}
               />
             )}
-            {/* All stored stops coloured by shift */}
+            {/* All stored stops */}
             {allStops.map(s => (
               <Marker
                 key={s.id}
                 position={[s.latitude, s.longitude]}
-                icon={(s as any).schedule_type === 'morning' ? morningIcon : eveningIcon}
+                icon={routeIcon}
               />
             ))}
           </MapContainer>
@@ -360,11 +319,7 @@ const StopTab = () => {
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
                 <div className="w-3.5 h-3.5 rounded-full bg-amber-400 border-2 border-amber-700 shrink-0"></div>
-                <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Morning</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full bg-gray-900 border-2 border-gray-700 shrink-0"></div>
-                <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Evening</span>
+                <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Route Stop</span>
               </div>
             </div>
           </div>
@@ -380,42 +335,6 @@ const StopTab = () => {
           <span className="text-[10px] font-bold text-gray-500 uppercase bg-gray-100 px-2 py-1 rounded">
             Total: {allStops.length} nodes
           </span>
-        </div>
-
-        {/* Shift Toggle Tabs */}
-        <div className="flex border-b border-gray-200 bg-gray-50/40">
-          <button
-            onClick={() => setViewShift('morning')}
-            className={`flex items-center gap-2 px-6 py-3 text-xs font-black uppercase tracking-widest transition-all border-b-2 ${
-              viewShift === 'morning'
-                ? 'border-amber-500 text-amber-700 bg-amber-50'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <Sun size={14} />
-            Morning Shift
-            <span className={`ml-1 px-1.5 py-0.5 rounded text-[9px] font-black ${
-              viewShift === 'morning' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {allStops.filter(s => (s as any).schedule_type === 'morning').length}
-            </span>
-          </button>
-          <button
-            onClick={() => setViewShift('evening')}
-            className={`flex items-center gap-2 px-6 py-3 text-xs font-black uppercase tracking-widest transition-all border-b-2 ${
-              viewShift === 'evening'
-                ? 'border-gray-900 text-white bg-gray-900'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <Moon size={14} />
-            Evening Shift
-            <span className={`ml-1 px-1.5 py-0.5 rounded text-[9px] font-black ${
-              viewShift === 'evening' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {allStops.filter(s => (s as any).schedule_type === 'evening').length}
-            </span>
-          </button>
         </div>
 
         {/* Table */}
@@ -443,12 +362,9 @@ const StopTab = () => {
                 <tr>
                   <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
                     <div className="flex flex-col items-center gap-3">
-                      {viewShift === 'morning'
-                        ? <Sun size={32} strokeWidth={1.5} className="text-amber-200" />
-                        : <Moon size={32} strokeWidth={1.5} className="text-gray-200" />
-                      }
+                      <Calendar size={32} strokeWidth={1.5} className="text-amber-200" />
                       <span className="text-sm italic">
-                        No {viewShift} checkpoints defined for this corridor.
+                        No checkpoints defined for this corridor.
                       </span>
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                         Add one using the form above ↑
@@ -460,11 +376,7 @@ const StopTab = () => {
                 filteredStops.map((stop, index) => (
                   <tr key={stop.id} className="hover:bg-gray-50/50 transition-colors group">
                     <td className="px-6 py-4">
-                      <span className={`text-xs font-black w-8 h-8 rounded flex items-center justify-center border ${
-                        viewShift === 'morning'
-                          ? 'bg-amber-50 text-amber-700 border-amber-100'
-                          : 'bg-gray-900 text-white border-gray-800'
-                      }`}>
+                      <span className="text-xs font-black w-8 h-8 rounded flex items-center justify-center border bg-amber-50 text-amber-700 border-amber-100">
                         {index + 1}
                       </span>
                     </td>
@@ -476,11 +388,7 @@ const StopTab = () => {
                       </p>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold border tracking-widest shadow-sm ${
-                        viewShift === 'morning'
-                          ? 'bg-amber-50 text-amber-700 border-amber-100'
-                          : 'bg-gray-900 text-white border-gray-800'
-                      }`}>
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold border tracking-widest shadow-sm bg-amber-50 text-amber-700 border-amber-100">
                         <Clock size={11} />
                         {stop.arrival_time}
                       </span>
@@ -506,7 +414,7 @@ const StopTab = () => {
         {!loading && filteredStops.length > 0 && (
           <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
             <span className="text-xs text-gray-500 font-medium">
-              Showing {filteredStops.length} {viewShift} stops
+              Showing {filteredStops.length} route stops
             </span>
             <div className="flex items-center gap-1">
               <button disabled className="p-1 rounded hover:bg-gray-100 disabled:opacity-30"><ChevronLeft size={16} /></button>

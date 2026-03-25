@@ -4,19 +4,14 @@ export interface RebuildRouteGeometryResult {
   ok: boolean;
   pendingStops?: boolean;
   message?: string;
-  updated_shifts?: string[];
-  cleared_shifts?: string[];
+  updated_paths?: string[];
+  cleared_paths?: string[];
 }
 
 export async function rebuildRouteGeometry(
-  routeId: string,
-  scheduleType?: string
+  routeId: string
 ): Promise<RebuildRouteGeometryResult> {
   const url = new URL(`${TRACKING_API_URL}/routes/${routeId}/rebuild-geometry`);
-
-  if (scheduleType) {
-    url.searchParams.set('schedule_type', scheduleType);
-  }
 
   const response = await fetch(url.toString(), {
     method: 'POST',
@@ -30,8 +25,8 @@ export async function rebuildRouteGeometry(
   if (response.ok) {
     return {
       ok: true,
-      updated_shifts: payload.updated_shifts || [],
-      cleared_shifts: payload.cleared_shifts || [],
+      updated_paths: payload.updated_paths || payload.updated_shifts || [],
+      cleared_paths: payload.cleared_paths || payload.cleared_shifts || [],
     };
   }
 

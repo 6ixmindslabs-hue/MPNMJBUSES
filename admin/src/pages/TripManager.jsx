@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Map, Calendar, Clock, UserCheck, Play, Pause, Square, AlertCircle, RefreshCw, Sun, Moon, ArrowRight, User, Hash } from 'lucide-react';
+import { Map, Calendar, Clock, UserCheck, Play, Pause, Square, AlertCircle, RefreshCw, ArrowRight, User, Hash } from 'lucide-react';
 import { format } from 'date-fns';
 
 const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
@@ -145,22 +145,20 @@ const TripManager = () => {
            </div>
         ) : trips.map((trip) => {
           const ui = getStatusUI(trip.status);
-          const tripShift = trip.schedule_type || trip.shift || 'morning';
-          const isMorning = tripShift === 'morning';
           const liveMeta = activeTripMeta[trip.id];
           
           return (
             <div key={trip.id} className="group bg-white rounded-[2.5rem] p-4 pr-10 border-2 border-slate-50 hover:border-indigo-100 shadow-premium transition-all flex flex-col lg:flex-row lg:items-center gap-8 relative overflow-hidden">
-               {/* Shift Indicator Vertical Bar */}
-               <div className={`absolute left-0 top-0 bottom-0 w-2 ${isMorning ? 'bg-amber-400' : 'bg-indigo-600'}`}></div>
+               {/* Daily Service Indicator */}
+               <div className="absolute left-0 top-0 bottom-0 w-2 bg-amber-400"></div>
                
-               {/* Shift Icon */}
+               {/* Service Icon */}
                <div className="flex items-center gap-6 lg:w-48 pl-4">
-                  <div className={`w-16 h-16 rounded-[1.5rem] flex items-center justify-center text-white shadow-xl ${isMorning ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-200' : 'bg-gradient-to-br from-indigo-600 to-slate-900 shadow-indigo-200'}`}>
-                     {isMorning ? <Sun size={32} strokeWidth={2.5} /> : <Moon size={32} strokeWidth={2.5} />}
+                  <div className="w-16 h-16 rounded-[1.5rem] flex items-center justify-center text-white shadow-xl bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-200">
+                     <Calendar size={32} strokeWidth={2.5} />
                   </div>
                   <div>
-                     <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${isMorning ? 'text-amber-600' : 'text-indigo-600'}`}>{tripShift} Session</p>
+                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-600">Daily Trip</p>
                      <p className="text-lg font-black text-slate-900 leading-tight mt-1">{format(new Date(trip.scheduled_start_time), 'hh:mm a')}</p>
                   </div>
                </div>
@@ -257,7 +255,7 @@ const TripManager = () => {
                     </div>
                     <div className="w-1 h-1 rounded-full bg-slate-300"></div>
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                       {(selectedTrip.schedule_type || selectedTrip.shift || 'morning')} Shift
+                       Daily Trip
                     </div>
                  </div>
               </div>

@@ -8,7 +8,7 @@ const {
 
 const EARTH_RADIUS_M = 6371000;
 const POLYLINE_PRECISION = 1e5;
-const SUPPORTED_SHIFTS = ['morning', 'evening'];
+const SUPPORTED_PATH_VARIANTS = ['default'];
 
 function normalizePoint(point) {
   if (!point) return null;
@@ -139,15 +139,25 @@ function parseStoredGeometry(geometry, scheduleType) {
     return null;
   }
 
-  if (geometry.shifts && typeof geometry.shifts === 'object') {
+  const storedPaths =
+    (geometry.paths && typeof geometry.paths === 'object' && geometry.paths) ||
+    (geometry.shifts && typeof geometry.shifts === 'object' && geometry.shifts) ||
+    null;
+
+  if (storedPaths) {
     if (scheduleType) {
-      return geometry.shifts[scheduleType] || null;
+      return (
+        storedPaths[scheduleType] ||
+        storedPaths.default ||
+        Object.values(storedPaths).find(Boolean) ||
+        null
+      );
     }
-    if (geometry.shifts.default) {
-      return geometry.shifts.default;
+    if (storedPaths.default) {
+      return storedPaths.default;
     }
-    const firstShift = Object.values(geometry.shifts).find(Boolean);
-    if (firstShift) return firstShift;
+    const firstPath = Object.values(storedPaths).find(Boolean);
+    if (firstPath) return firstPath;
   }
 
   if (scheduleType && geometry[scheduleType]) {
@@ -155,6 +165,8 @@ function parseStoredGeometry(geometry, scheduleType) {
   }
 
   if (scheduleType) {
+    const firstEntry = Object.values(geometry).find(Boolean);
+    if (firstEntry) return firstEntry;
     return null;
   }
 
@@ -190,63 +202,50 @@ function decodeStoredRouteGeometry(routeRecord, scheduleType) {
   return [];
 }
 
-function makeGeometryDocument(existingGeometry, updatesByShift, shiftsToClear = []) {
+function makeGeometryDocument(existingGeometry, updatesByPathKey, pathKeysToClear = []) {
   const existing =
     existingGeometry && typeof existingGeometry === 'object' && !Array.isArray(existingGeometry)
       ? existingGeometry
       : {};
-  const existingShifts = {
-    ...(existing.shifts || {}),
+  const existingPaths = {
+    ...((existing.paths && typeof existing.paths === 'object' ? existing.paths : null) ||
+      (existing.shifts && typeof existing.shifts === 'object' ? existing.shifts : null) ||
+      {}),
   };
 
-  for (const shift of shiftsToClear) {
-    delete existingShifts[shift];
+  for (const pathKey of pathKeysToClear) {
+    delete existingPaths[pathKey];
   }
 
-  return {
+  const geometryDocument = {
     ...existing,
     provider: ROUTING_PROVIDER,
     profile: ROUTING_PROFILE,
     updated_at: new Date().toISOString(),
-    shifts: {
-      ...existingShifts,
-      ...updatesByShift,
+    paths: {
+      ...existingPaths,
+      ...updatesByPathKey,
     },
   };
+
+  delete geometryDocument.shifts;
+  return geometryDocument;
 }
 
 async function fetchOrderedStops(routeId, scheduleType) {
   let query = supabaseAdmin
     .from('stops')
-    .select('id, stop_name, latitude, longitude, arrival_time, schedule_type')
+    .select('id, stop_name, latitude, longitude, arrival_time')
     .eq('route_id', routeId)
     .order('arrival_time', { ascending: true });
 
-  if (scheduleType) {
+  if (scheduleType && scheduleType !== 'daily' && scheduleType !== 'default') {
     query = query.eq('schedule_type', scheduleType);
   }
 
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
-}
-
-async function detectAvailableShifts(routeId) {
-  const { data, error } = await supabaseAdmin
-    .from('stops')
-    .select('schedule_type')
-    .eq('route_id', routeId);
-
-  if (error) throw error;
-
-  const unique = new Set(
-    (data || [])
-      .map((row) => row.schedule_type)
-      .filter((value) => typeof value === 'string' && value.length > 0)
-  );
-
-  const shifts = [...unique].filter((shift) => SUPPORTED_SHIFTS.includes(shift));
-  return shifts.length ? shifts : ['default'];
 }
 
 async function requestRoadGeometry(waypoints) {
@@ -330,8 +329,8 @@ async function updateRouteGeometryRecord(routeId, payload) {
 }
 
 async function rebuildRouteGeometryForRoute(routeId, options = {}) {
-  const requestedShift = options.scheduleType;
-  const shifts = requestedShift ? [requestedShift] : await detectAvailableShifts(routeId);
+  const requestedPathKey = options.pathKey || options.scheduleType || 'default';
+  const pathKeys = ['default'];
 
   const { data: route, error: routeError } = await supabaseAdmin
     .from('routes')
@@ -343,19 +342,19 @@ async function rebuildRouteGeometryForRoute(routeId, options = {}) {
     throw routeError || new Error('Route not found');
   }
 
-  const shiftUpdates = {};
-  const clearedShifts = [];
+  const pathUpdates = {};
+  const clearedPaths = [];
 
-  for (const shift of shifts) {
-    const stops = await fetchOrderedStops(routeId, shift === 'default' ? null : shift);
+  for (const pathKey of pathKeys) {
+    const stops = await fetchOrderedStops(routeId, null);
     const waypointPoints = normalizePointList(stops);
     if (waypointPoints.length < 2) {
-      clearedShifts.push(shift);
+      clearedPaths.push(pathKey);
       continue;
     }
 
     const geometry = await requestRoadGeometry(waypointPoints);
-    shiftUpdates[shift] = {
+    pathUpdates[pathKey] = {
       polyline: geometry.polyline,
       distance_m: geometry.distance_m,
       duration_s: geometry.duration_s,
@@ -365,20 +364,20 @@ async function rebuildRouteGeometryForRoute(routeId, options = {}) {
     };
   }
 
-  const geometryDocument = makeGeometryDocument(route.geometry, shiftUpdates, clearedShifts);
+  const geometryDocument = makeGeometryDocument(route.geometry, pathUpdates, clearedPaths);
   const representativePath = decodeStoredRouteGeometry(
     {
       geometry: geometryDocument,
       polyline: null,
     },
-    requestedShift
+    requestedPathKey
   );
   const legacyPolyline = pointsToPairs(representativePath);
   const hasStoredGeometry =
     representativePath.length >= 2 ||
-    Object.keys(geometryDocument.shifts || {}).length > 0;
+    Object.keys(geometryDocument.paths || {}).length > 0;
 
-  if (!hasStoredGeometry && !clearedShifts.length) {
+  if (!hasStoredGeometry && !clearedPaths.length) {
     throw new Error('At least two ordered stops are required to build route geometry.');
   }
 
@@ -391,13 +390,15 @@ async function rebuildRouteGeometryForRoute(routeId, options = {}) {
     routeId,
     geometry: geometryDocument,
     polyline: legacyPolyline,
-    updated_shifts: Object.keys(shiftUpdates),
-    cleared_shifts: clearedShifts,
+    updated_paths: Object.keys(pathUpdates),
+    cleared_paths: clearedPaths,
+    updated_shifts: Object.keys(pathUpdates),
+    cleared_shifts: clearedPaths,
   };
 }
 
 module.exports = {
-  SUPPORTED_SHIFTS,
+  SUPPORTED_PATH_VARIANTS,
   normalizePoint,
   normalizePointList,
   pointsToPairs,

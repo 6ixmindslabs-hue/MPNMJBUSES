@@ -96,7 +96,8 @@ class _TripScreenState extends State<TripScreen> {
     final started = await _gpsService.startTracking();
     if (!started) return;
 
-    final connected = await _wsService.connect(wsToken, _trip!['id'].toString());
+    final connected =
+        await _wsService.connect(wsToken, _trip!['id'].toString());
     if (!connected) {
       await _gpsService.stopTracking();
       _wsService.disconnect();
@@ -181,8 +182,7 @@ class _TripScreenState extends State<TripScreen> {
     final currentTripId = _trip!['id'].toString();
     final persistedTripId = await _wsService.getPersistedTripId();
     final serviceRunning = await _gpsService.isServiceRunning();
-    final shouldSwitchTrip =
-        serviceRunning &&
+    final shouldSwitchTrip = serviceRunning &&
         persistedTripId != null &&
         persistedTripId.isNotEmpty &&
         persistedTripId != currentTripId;
@@ -207,7 +207,8 @@ class _TripScreenState extends State<TripScreen> {
         backgroundColor: Colors.white,
         title: const Text(
           'End Tracking',
-          style: TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w800),
+          style:
+              TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w800),
         ),
         content: const Text(
           'Are you sure you want to stop tracking for this driver trip?',
@@ -377,7 +378,8 @@ class _TripScreenState extends State<TripScreen> {
               icon: const Icon(Icons.refresh_rounded),
               label: const Text(
                 'CHECK FOR ASSIGNMENTS',
-                style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                style:
+                    TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFF59E0B),
@@ -394,7 +396,8 @@ class _TripScreenState extends State<TripScreen> {
             onPressed: _signOut,
             child: const Text(
               'Sign Out',
-              style: TextStyle(color: Color(0xFF94A3B8), fontWeight: FontWeight.w700),
+              style: TextStyle(
+                  color: Color(0xFF94A3B8), fontWeight: FontWeight.w700),
             ),
           ),
         ],
@@ -423,7 +426,8 @@ class _TripScreenState extends State<TripScreen> {
         ? bus['registration_number'].toString()
         : 'Bus not assigned';
 
-    final driverName = AuthService.currentDriver?['name']?.toString() ?? 'Driver';
+    final driverName =
+        AuthService.currentDriver?['name']?.toString() ?? 'Driver';
 
     return Column(
       children: [
@@ -468,7 +472,7 @@ class _TripScreenState extends State<TripScreen> {
                       ),
                     ),
                     Text(
-                      (_trip!['shift'] ?? 'assigned').toString().toUpperCase(),
+                      'ASSIGNED TRIP',
                       style: const TextStyle(
                         color: Color(0xFF64748B),
                         fontSize: 11,
@@ -481,7 +485,8 @@ class _TripScreenState extends State<TripScreen> {
               ),
               IconButton(
                 onPressed: _signOut,
-                icon: const Icon(Icons.logout_rounded, color: Color(0xFF1E293B)),
+                icon:
+                    const Icon(Icons.logout_rounded, color: Color(0xFF1E293B)),
                 tooltip: 'Sign Out',
               ),
             ],
@@ -574,6 +579,18 @@ class _TripScreenState extends State<TripScreen> {
         Icons.stop_rounded,
         const [Color(0xFFEF4444), Color(0xFFDC2626)],
         _endTracking,
+      );
+    }
+
+    if ((_trip?['source'] ?? 'schedule') == 'schedule' &&
+        _trip?['can_start_now'] == false) {
+      return _buildInfoCard(
+        icon: Icons.schedule_rounded,
+        iconColor: Colors.amber.shade700,
+        title: 'Trip Not Startable Yet',
+        subtitle: (_trip?['schedule_window_message'] ??
+                'This trip can only start near its scheduled time.')
+            .toString(),
       );
     }
 
