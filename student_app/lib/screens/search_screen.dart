@@ -6,6 +6,9 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/constants.dart';
 import 'bus_availability_screen.dart';
+import 'live_tracking_screen.dart';
+
+enum _TrackingAccessMode { instant, planned }
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -17,8 +20,12 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   List<Map<String, dynamic>> _stops = [];
   List<Map<String, dynamic>> _recentSearches = [];
+  List<Map<String, dynamic>> _activeLiveBuses = [];
   bool _loading = true;
+  bool _fetchingLiveBuses = true;
+  _TrackingAccessMode _accessMode = _TrackingAccessMode.instant;
   String? _loadError;
+  String? _liveBusesError;
   String? _fromStopId;
   String? _toStopId;
   final TextEditingController _fromStopController = TextEditingController();
@@ -36,6 +43,7 @@ class _SearchScreenState extends State<SearchScreen> {
     _fromStopFocusNode.addListener(_handleSelectorFocusChange);
     _toStopFocusNode.addListener(_handleSelectorFocusChange);
     _fetchStops();
+    _fetchLiveBuses();
     _loadRecentSearches();
   }
 
@@ -131,6 +139,146 @@ class _SearchScreenState extends State<SearchScreen> {
             .toString()
             .compareTo((b['arrival_time'] ?? '').toString()),
       );
+  }
+
+  Future<void> _fetchLiveBuses() async {
+    setState(() {
+      _fetchingLiveBuses = true;
+      _liveBusesError = null;
+    });
+
+    try {
+      final response =
+          await http.get(Uri.parse('${AppConfig.effectiveApiBase}/trips/active'));
+      if (response.statusCode != 200) {
+        setState(() {
+          _fetchingLiveBuses = false;
+          _liveBusesError = 'Unable to load live buses right now.';
+        });
+        return;
+      }
+
+      final List<dynamic> data = jsonDecode(response.body);
+      final liveTrips = _dedupeLiveTripsByBus(
+        data
+            .whereType<Map>()
+            .map((item) => _normalizeLiveTrip(Map<String, dynamic>.from(item)))
+            .where(_hasRenderableLiveBus)
+            .toList(),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _activeLiveBuses = liveTrips;
+        _fetchingLiveBuses = false;
+      });
+    } catch (error) {
+      debugPrint('Error fetching live buses: $error');
+      if (!mounted) return;
+      setState(() {
+        _fetchingLiveBuses = false;
+        _liveBusesError = 'Network error while loading live buses.';
+      });
+    }
+  }
+
+  Map<String, dynamic> _normalizeLiveTrip(Map<String, dynamic> trip) {
+    final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
+    final route = Map<String, dynamic>.from(
+      trip['trip_route'] ?? trip['routes'] ?? schedule['routes'] ?? const {},
+    );
+    final bus = Map<String, dynamic>.from(
+      trip['buses'] ?? schedule['buses'] ?? const {},
+    );
+
+    return {
+      ...trip,
+      'route_id': trip['route_id'] ?? route['id'],
+      'bus_id': trip['bus_id'] ?? bus['id'],
+      'trip_direction': _tripDirectionFromTrip(trip),
+      'trip_route': route,
+      'buses': bus,
+      'schedules': {
+        ...schedule,
+        'routes': route,
+        'buses': bus,
+      },
+    };
+  }
+
+  String _tripDirectionFromTrip(Map<String, dynamic> trip) {
+    final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
+    final direction =
+        (trip['trip_direction'] ?? schedule['trip_direction'] ?? 'outbound')
+            .toString();
+    return direction == 'return' ? 'return' : 'outbound';
+  }
+
+  Map<String, dynamic> _busOfTrip(Map<String, dynamic> trip) {
+    final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
+    return Map<String, dynamic>.from(
+      trip['buses'] ?? schedule['buses'] ?? const {},
+    );
+  }
+
+  Map<String, dynamic> _routeOfTrip(Map<String, dynamic> trip) {
+    final schedule = Map<String, dynamic>.from(trip['schedules'] ?? const {});
+    return Map<String, dynamic>.from(
+      trip['trip_route'] ?? trip['routes'] ?? schedule['routes'] ?? const {},
+    );
+  }
+
+  bool _hasRenderableLiveBus(Map<String, dynamic> trip) {
+    final bus = _busOfTrip(trip);
+    final tripId = (trip['id'] ?? '').toString().trim();
+    return tripId.isNotEmpty ||
+        (bus['id'] ?? '').toString().trim().isNotEmpty ||
+        (bus['bus_number'] ?? '').toString().trim().isNotEmpty ||
+        (bus['registration_number'] ?? '').toString().trim().isNotEmpty ||
+        (bus['bus_name'] ?? '').toString().trim().isNotEmpty;
+  }
+
+  List<Map<String, dynamic>> _dedupeLiveTripsByBus(
+    List<Map<String, dynamic>> trips,
+  ) {
+    final seenKeys = <String>{};
+    final result = <Map<String, dynamic>>[];
+
+    for (final trip in trips) {
+      final bus = _busOfTrip(trip);
+      final busId = (trip['bus_id'] ?? bus['id'] ?? '').toString().trim();
+      final scheduleId =
+          (trip['schedule_id'] ?? trip['schedules']?['id'] ?? '').toString().trim();
+      final fallbackId = (trip['id'] ?? '').toString().trim();
+      final dedupeKey = busId.isNotEmpty
+          ? 'bus::$busId'
+          : scheduleId.isNotEmpty
+              ? 'schedule::$scheduleId'
+              : 'trip::$fallbackId';
+
+      if (seenKeys.add(dedupeKey)) {
+        result.add(trip);
+      }
+    }
+
+    return result;
+  }
+
+  void _openLiveTrip(Map<String, dynamic> trip) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LiveTrackingScreen(trip: trip),
+      ),
+    );
+  }
+
+  void _setAccessMode(_TrackingAccessMode mode) {
+    if (_accessMode == mode) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _accessMode = mode;
+    });
   }
 
   Future<void> _fetchStops() async {
@@ -595,187 +743,682 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).padding.top;
+
     return Scaffold(
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(
-                  top: 80, left: 32, right: 32, bottom: 48),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFFFACC15), Color(0xFFF59E0B)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+      backgroundColor: const Color(0xFFF3F4F6),
+      body: Column(
+        children: [
+          _buildHeroHeader(topInset),
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: _buildModeSurface(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroHeader(double topInset) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(24, topInset + 18, 24, 26),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFFFACC15), Color(0xFFF59E0B)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(48),
+                child: const Icon(
+                  LucideIcons.bus,
+                  size: 28,
+                  color: Colors.white,
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [
-                              Color(0xFFFACC15),
-                              Color(0xFFF59E0B),
-                              Color(0xFFEA580C)
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFFF59E0B)
-                                  .withValues(alpha: 0.3),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        child: const Center(
-                          child: Icon(LucideIcons.bus,
-                              color: Colors.white, size: 22),
-                        ),
+              const SizedBox(width: 18),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'How would you like\nto track your bus?',
+                      style: TextStyle(
+                        color: Color(0xFF111827),
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        height: 1.12,
                       ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: _loading ? null : _fetchStops,
-                        icon: const Icon(LucideIcons.refreshCw,
-                            color: Color(0xFF1E293B)),
-                        tooltip: 'Refresh stops',
+                    ),
+                    SizedBox(height: 10),
+                    Text(
+                      'Choose what\'s easiest for you.',
+                      style: TextStyle(
+                        color: Color(0xFF3F3F46),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeSurface() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: Color(0xFFFAFAFB),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(32),
+          topRight: Radius.circular(32),
+        ),
+      ),
+      child: Column(
+        children: [
+          _buildModeSwitcher(),
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeOutCubic,
+              child: SingleChildScrollView(
+                key: ValueKey(_accessMode),
+                physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+                child: _accessMode == _TrackingAccessMode.instant
+                    ? _buildInstantModeContent()
+                    : _buildPlannedModeContent(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeSwitcher() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF2F2F4),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(32),
+          topRight: Radius.circular(32),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildModeTab(
+              mode: _TrackingAccessMode.instant,
+              label: 'Track Instantly',
+            ),
+          ),
+          Expanded(
+            child: _buildModeTab(
+              mode: _TrackingAccessMode.planned,
+              label: 'Find by Stops',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeTab({
+    required _TrackingAccessMode mode,
+    required String label,
+  }) {
+    final isActive = _accessMode == mode;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _setAccessMode(mode),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+          decoration: BoxDecoration(
+            color: isActive ? Colors.white : const Color(0xFFF2F2F4),
+            border: Border(
+              bottom: BorderSide(
+                color: isActive
+                    ? const Color(0xFF60A5FA)
+                    : Colors.transparent,
+                width: 3,
+              ),
+            ),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: isActive
+                  ? const Color(0xFF111827)
+                  : const Color(0xFF71717A),
+              fontSize: 16,
+              fontWeight: isActive ? FontWeight.w900 : FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstantModeContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader(
+          eyebrow: 'LIVE BUSES NOW',
+          title: 'Jump straight into active bus tracking',
+          action: IconButton(
+            onPressed: _fetchingLiveBuses ? null : _fetchLiveBuses,
+            icon: const Icon(
+              LucideIcons.refreshCw,
+              size: 20,
+              color: Color(0xFF111827),
+            ),
+            tooltip: 'Refresh live buses',
+          ),
+        ),
+        const SizedBox(height: 18),
+        _buildLiveBusesSection(),
+      ],
+    );
+  }
+
+  Widget _buildPlannedModeContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader(
+          eyebrow: 'STOP-BASED SEARCH',
+          title: 'Choose pickup and destination',
+          subtitle: 'Find buses for a planned trip without changing your existing workflow.',
+          action: IconButton(
+            onPressed: _loading ? null : _fetchStops,
+            icon: const Icon(
+              LucideIcons.refreshCw,
+              size: 20,
+              color: Color(0xFF111827),
+            ),
+            tooltip: 'Refresh stops',
+          ),
+        ),
+        const SizedBox(height: 18),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_loadError != null)
+          _buildErrorState()
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSearchableSelectorCard(
+                icon: LucideIcons.circleDot,
+                iconColor: const Color(0xFF2563EB),
+                label: 'SELECT PICKUP STOP',
+                controller: _fromStopController,
+                focusNode: _fromStopFocusNode,
+                query: _fromQuery,
+                hintText: 'Type pickup stop name...',
+                suggestions: _filteredStops(
+                  forDestination: false,
+                  query: _fromQuery,
+                ),
+                onChanged: _handleFromQueryChanged,
+                onSelected: _selectFromStop,
+                onClear: _clearFromStop,
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: Icon(
+                    LucideIcons.arrowDownUp,
+                    color: Color(0xFFD4D4D8),
+                    size: 18,
+                  ),
+                ),
+              ),
+              _buildSearchableSelectorCard(
+                icon: LucideIcons.mapPin,
+                iconColor: const Color(0xFFDC2626),
+                label: 'SELECT DESTINATION',
+                controller: _toStopController,
+                focusNode: _toStopFocusNode,
+                query: _toQuery,
+                hintText: _fromStopId == null
+                    ? 'Choose pickup first or search all stops...'
+                    : 'Type destination stop name...',
+                suggestions: _filteredStops(
+                  forDestination: true,
+                  query: _toQuery,
+                ),
+                onChanged: _handleToQueryChanged,
+                onSelected: _selectToStop,
+                onClear: _clearToStop,
+                helperText: _fromStopId == null
+                    ? null
+                    : 'Showing valid stops after ${_selectedStopName(_fromStopId!)}',
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 60,
+                child: ElevatedButton(
+                  onPressed: _searchBuses,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF59E0B),
+                    foregroundColor: const Color(0xFF1E293B),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    elevation: 6,
+                    shadowColor: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(LucideIcons.search, size: 19),
+                      SizedBox(width: 10),
+                      Text(
+                        'FIND AVAILABLE BUSES',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                          letterSpacing: 0.5,
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
+                ),
+              ),
+              if (_fromStopId != null || _toStopId != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '${_fromStopId != null ? _selectedStopName(_fromStopId!) : 'Pickup?'}  ->  ${_toStopId != null ? _selectedStopName(_toStopId!) : 'Destination?'}',
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+              _buildRecentSearches(),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSectionHeader({
+    required String eyebrow,
+    required String title,
+    String? subtitle,
+    Widget? action,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    'Where are you\ngoing today?',
-                    style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                          color: const Color(0xFF1E293B),
-                          fontSize: 34,
-                          letterSpacing: -1,
-                          height: 1.1,
-                        ),
+                    eyebrow,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF71717A),
+                      letterSpacing: 1.5,
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Track your college bus live',
-                    style: TextStyle(
-                        color: Color(0xFF334155),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600),
+                  const SizedBox(height: 6),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Color(0xFF18181B),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0xFF71717A),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _loadError != null
-                      ? _buildErrorState()
-                      : Column(
-                          children: [
-                            _buildSearchableSelectorCard(
-                              icon: LucideIcons.circleDot,
-                              iconColor: Colors.blue,
-                              label: 'SELECT PICKUP STOP',
-                              controller: _fromStopController,
-                              focusNode: _fromStopFocusNode,
-                              query: _fromQuery,
-                              hintText: 'Type pickup stop name...',
-                              suggestions: _filteredStops(
-                                forDestination: false,
-                                query: _fromQuery,
-                              ),
-                              onChanged: _handleFromQueryChanged,
-                              onSelected: _selectFromStop,
-                              onClear: _clearFromStop,
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
-                              child: Icon(LucideIcons.arrowDownUp,
-                                  color: Color(0xFFCBD5E1), size: 18),
-                            ),
-                            _buildSearchableSelectorCard(
-                              icon: LucideIcons.mapPin,
-                              iconColor: Colors.red,
-                              label: 'SELECT DESTINATION',
-                              controller: _toStopController,
-                              focusNode: _toStopFocusNode,
-                              query: _toQuery,
-                              hintText: _fromStopId == null
-                                  ? 'Choose pickup first or search all stops...'
-                                  : 'Type destination stop name...',
-                              suggestions: _filteredStops(
-                                forDestination: true,
-                                query: _toQuery,
-                              ),
-                              onChanged: _handleToQueryChanged,
-                              onSelected: _selectToStop,
-                              onClear: _clearToStop,
-                              helperText: _fromStopId == null
-                                  ? null
-                                  : 'Showing valid stops after ${_selectedStopName(_fromStopId!)}',
-                            ),
-                            const SizedBox(height: 48),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 64,
-                              child: ElevatedButton(
-                                onPressed: _searchBuses,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFF59E0B),
-                                  foregroundColor: const Color(0xFF1E293B),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  elevation: 8,
-                                  shadowColor: const Color(0xFFF59E0B)
-                                      .withValues(alpha: 0.4),
-                                ),
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(LucideIcons.search, size: 20),
-                                    SizedBox(width: 12),
-                                    Text(
-                                      'FIND AVAILABLE BUSES',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w900,
-                                          fontSize: 16,
-                                          letterSpacing: 0.5),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            if (_fromStopId != null || _toStopId != null)
-                              Text(
-                                '${_fromStopId != null ? _selectedStopName(_fromStopId!) : 'Pickup?'}  ->  ${_toStopId != null ? _selectedStopName(_toStopId!) : 'Destination?'}',
-                                style: const TextStyle(
-                                  color: Color(0xFF64748B),
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            const SizedBox(height: 32),
-                            _buildRecentSearches(),
-                          ],
-                        ),
-            ),
+            if (action != null) action,
           ],
         ),
+      ],
+    );
+  }
+
+  Widget _buildLiveBusesSection() {
+    return Column(
+      children: [
+        if (_fetchingLiveBuses)
+          _buildLiveBusesStateCard(
+            icon: LucideIcons.refreshCw,
+            title: 'Checking active buses',
+            message: 'Pulling current trips from the live tracking service.',
+            trailing: const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.2),
+            ),
+          )
+        else if (_liveBusesError != null)
+          _buildLiveBusesStateCard(
+            icon: LucideIcons.wifiOff,
+            title: 'Live buses unavailable',
+            message: _liveBusesError!,
+            action: TextButton(
+              onPressed: _fetchLiveBuses,
+              child: const Text('Retry'),
+            ),
+          )
+        else if (_activeLiveBuses.isEmpty)
+          _buildLiveBusesStateCard(
+            icon: LucideIcons.bus,
+            title: 'No active buses yet',
+            message:
+                'Live buses will appear here as soon as drivers start active trips.',
+          )
+        else
+          Column(
+            children: _activeLiveBuses
+                .map((trip) => Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: _buildLiveBusCard(trip),
+                    ))
+                .toList(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLiveBusesStateCard({
+    required IconData icon,
+    required String title,
+    required String message,
+    Widget? trailing,
+    Widget? action,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: const Color(0xFF64748B), size: 18),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF1E293B),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+                if (action != null) ...[
+                  const SizedBox(height: 10),
+                  action,
+                ],
+              ],
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 12),
+            trailing,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveBusCard(Map<String, dynamic> trip) {
+    final bus = _busOfTrip(trip);
+    final route = _routeOfTrip(trip);
+    final nextStop = trip['next_stop'] is Map
+        ? Map<String, dynamic>.from(trip['next_stop'])
+        : const <String, dynamic>{};
+    final tripDirection = _tripDirectionLabel(_tripDirectionFromTrip(trip));
+    final routeLabel = _routeLabelForTrip(route);
+    final busNumber = bus['bus_number']?.toString().trim();
+    final regNumber = bus['registration_number']?.toString().trim();
+    final busTitle = (bus['bus_name']?.toString().trim().isNotEmpty == true
+            ? bus['bus_name'].toString()
+            : 'MPNMJEC BUS')
+        .toUpperCase();
+    final statusColor = trip['is_online'] == false
+        ? const Color(0xFFDC2626)
+        : const Color(0xFF16A34A);
+    final statusLabel = trip['is_online'] == false ? 'OFFLINE' : 'LIVE';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _openLiveTrip(trip),
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      busNumber?.isNotEmpty == true
+                          ? busNumber!.toUpperCase()
+                          : regNumber?.isNotEmpty == true
+                              ? regNumber!.toUpperCase()
+                              : 'BUS',
+                      style: const TextStyle(
+                        color: Color(0xFF475569),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(LucideIcons.zap, size: 12, color: statusColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          statusLabel,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                busTitle,
+                style: const TextStyle(
+                  color: Color(0xFF1E293B),
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                routeLabel,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildLiveTripMetaChip(
+                    icon: LucideIcons.arrowRightLeft,
+                    label: tripDirection,
+                  ),
+                  _buildLiveTripMetaChip(
+                    icon: LucideIcons.mapPin,
+                    label: nextStop['stop_name']?.toString().trim().isNotEmpty ==
+                            true
+                        ? 'Next ${nextStop['stop_name']}'
+                        : 'Next stop updating',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLiveTripMetaChip({
+    required IconData icon,
+    required String label,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: const Color(0xFF64748B)),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF475569),
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1078,6 +1721,26 @@ class _SearchScreenState extends State<SearchScreen> {
         ],
       ),
     );
+  }
+
+  String _routeLabelForTrip(Map<String, dynamic> route) {
+    final routeName = route['route_name']?.toString().trim();
+    if (routeName?.isNotEmpty ?? false) {
+      return routeName!;
+    }
+
+    final start = route['start_location']?.toString().trim();
+    final end = route['end_location']?.toString().trim();
+    if ((start?.isNotEmpty ?? false) && (end?.isNotEmpty ?? false)) {
+      return '$start -> $end';
+    }
+
+    final routeId = route['id']?.toString().trim();
+    if (routeId?.isNotEmpty ?? false) {
+      return 'Route ${routeId!.substring(0, math.min(routeId.length, 6))}';
+    }
+
+    return 'Route details syncing';
   }
 
   String _routeLabelForStop(Map<String, dynamic> stop) {

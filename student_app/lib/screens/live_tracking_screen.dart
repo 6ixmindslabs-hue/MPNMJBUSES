@@ -14,11 +14,11 @@ import '../config/constants.dart';
 
 class LiveTrackingScreen extends StatefulWidget {
   final Map<String, dynamic> trip;
-  final Map<String, dynamic> stopInfo;
+  final Map<String, dynamic>? stopInfo;
 
   const LiveTrackingScreen({
     required this.trip,
-    required this.stopInfo,
+    this.stopInfo,
     super.key,
   });
 
@@ -90,6 +90,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   bool _needsTimelineMeasurement = true;
   List<GlobalKey> _timelineDotKeys = const [];
   Map<int, Offset> _timelineDotCenters = const {};
+  Map<String, dynamic>? _selectedStopInfo;
   bool _stopAlarmEnabled = false;
   int _alarmLeadMinutes = 5;
   bool _alarmTriggered = false;
@@ -103,6 +104,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       duration: const Duration(milliseconds: AppConfig.refreshIntervalMs),
     )..addListener(_handleMarkerAnimationTick);
     _alarmPlayer = AudioPlayer();
+    _selectedStopInfo = widget.stopInfo == null
+        ? null
+        : Map<String, dynamic>.from(widget.stopInfo!);
     unawaited(_initializeAlarmPreferences());
     _fetchLiveRoute(includeFullGeometry: true);
     _startLiveTracking();
@@ -635,10 +639,85 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     });
   }
 
+  String? _selectedStopId() {
+    return (_selectedStopInfo?['id'] ?? _selectedStopInfo?['logical_key'])
+        ?.toString();
+  }
+
+  Map<String, dynamic>? _matchRouteStop(
+    Map<String, dynamic>? stopInfo, [
+    List<Map<String, dynamic>>? sourceStops,
+  ]) {
+    if (stopInfo == null) return null;
+
+    final stops = sourceStops ?? _routeStops;
+    final selectedId =
+        (stopInfo['id'] ?? stopInfo['logical_key'])?.toString().trim();
+    final selectedName =
+        (stopInfo['stop_name'] ?? '').toString().trim().toLowerCase();
+
+    if (selectedId != null && selectedId.isNotEmpty) {
+      for (final stop in stops) {
+        if (stop['id']?.toString() == selectedId) {
+          return Map<String, dynamic>.from(stop);
+        }
+      }
+    }
+
+    if (selectedName.isEmpty) return null;
+
+    for (final stop in stops) {
+      final stopName = (stop['stop_name'] ?? '').toString().trim().toLowerCase();
+      if (stopName == selectedName) {
+        return Map<String, dynamic>.from(stop);
+      }
+    }
+
+    return null;
+  }
+
+  void _syncSelectedStopWithRoute(List<Map<String, dynamic>> routeStops) {
+    final matchedStop = _matchRouteStop(_selectedStopInfo, routeStops);
+    if (matchedStop == null && _selectedStopInfo != null) {
+      _selectedStopInfo = null;
+      _stopAlarmEnabled = false;
+      _alarmTriggered = false;
+      if (_alarmPlaying) {
+        unawaited(_stopAlarmPlayback(resetTrigger: true));
+      }
+      return;
+    }
+
+    if (matchedStop != null) {
+      _selectedStopInfo = matchedStop;
+    }
+  }
+
+  void _selectStopFromTimeline(Map<String, dynamic> stop) {
+    final nextSelection = Map<String, dynamic>.from(stop);
+    final selectedId = _selectedStopId();
+    final nextId = (nextSelection['id'] ?? '').toString();
+    final selectionChanged = selectedId != nextId;
+
+    if (!mounted) return;
+    setState(() {
+      _selectedStopInfo = nextSelection;
+      if (selectionChanged) {
+        _alarmTriggered = false;
+      }
+    });
+
+    if (selectionChanged && _alarmPlaying) {
+      unawaited(_stopAlarmPlayback(resetTrigger: true));
+    }
+
+    _evaluateStopAlarm();
+  }
+
   Map<String, dynamic>? _resolveAlarmTargetStop() {
     if (_routeStops.isEmpty) return null;
 
-    final selectedStopId = widget.stopInfo['id']?.toString();
+    final selectedStopId = _selectedStopId();
     if (selectedStopId == null) return null;
 
     try {
@@ -646,7 +725,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         (stop) => stop['id']?.toString() == selectedStopId,
       );
     } catch (_) {
-      return null;
+      return _matchRouteStop(_selectedStopInfo);
     }
   }
 
@@ -1310,6 +1389,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       if (!mounted) return;
       setState(() {
         _routeStops = routeStops;
+        _syncSelectedStopWithRoute(routeStops);
         _syncTimelineDotKeys();
         _needsTimelineMeasurement = true;
         _activeNextStopLocation = nextStopLocation;
@@ -1377,7 +1457,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final schedules = Map<String, dynamic>.from(
       widget.trip['schedules'] ?? const {},
     );
-    final bus = Map<String, dynamic>.from(schedules['buses'] ?? const {});
+    final bus = Map<String, dynamic>.from(
+      widget.trip['buses'] ?? schedules['buses'] ?? const {},
+    );
     final hasTimelineContent = _loadingStops || _routeStops.isNotEmpty;
     final initialSheetSize = hasTimelineContent ? 0.34 : 0.26;
     final snapSizes = hasTimelineContent
@@ -1971,15 +2053,20 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   Widget _buildStopAlarmPanel() {
     final targetMeta = _resolveAlarmTargetMeta();
-    final stopName = (widget.stopInfo['stop_name'] ?? 'your stop').toString();
+    final stopName =
+        (_selectedStopInfo?['stop_name'] ?? 'Select a stop').toString();
+    final alarmArmed = _selectedStopInfo != null && _stopAlarmEnabled;
     final statusColor = _alarmPlaying
         ? const Color(0xFFDC2626)
-        : _stopAlarmEnabled
+        : alarmArmed
             ? const Color(0xFFF59E0B)
             : const Color(0xFF94A3B8);
 
     String statusText;
-    if (targetMeta == null) {
+    if (_selectedStopInfo == null) {
+      statusText =
+          'Pick a stop from the timeline below to enable a stop alarm or follow a specific stop.';
+    } else if (targetMeta == null) {
       statusText = 'This selected stop is not available on the current trip.';
     } else if (targetMeta.isPassedStop) {
       statusText = 'The bus has already passed $stopName.';
@@ -2057,8 +2144,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 ),
               ),
               Switch.adaptive(
-                value: _stopAlarmEnabled,
-                onChanged: targetMeta == null ? null : _setAlarmEnabled,
+                value: alarmArmed,
+                onChanged:
+                    _selectedStopInfo == null || targetMeta == null ? null : _setAlarmEnabled,
                 activeColor: const Color(0xFFF59E0B),
               ),
             ],
@@ -2081,7 +2169,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               return ChoiceChip(
                 label: Text('$minutes min'),
                 selected: _alarmLeadMinutes == minutes,
-                onSelected: targetMeta == null
+                onSelected: _selectedStopInfo == null || targetMeta == null
                     ? null
                     : (selected) {
                         if (selected) {
@@ -2107,6 +2195,20 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               );
             }).toList(),
           ),
+          if (_selectedStopInfo == null &&
+              _routeStops.isNotEmpty &&
+              _nextStopIndex >= 0 &&
+              _nextStopIndex < _routeStops.length) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _selectStopFromTimeline(_routeStops[_nextStopIndex]),
+                icon: const Icon(LucideIcons.mapPin, size: 16),
+                label: const Text('Use next stop'),
+              ),
+            ),
+          ],
           if (_alarmPlaying) ...[
             const SizedBox(height: 10),
             SizedBox(
@@ -2413,8 +2515,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         stopRouteDistance - _currentRouteDistanceMeters;
     final isPassedStop = distanceFromBusOnRoute < -_stopArrivalRadiusMeters;
     final isNextStop = index == _nextStopIndex;
-    final isSelectedStop =
-        stop['id']?.toString() == widget.stopInfo['id']?.toString();
+    final isSelectedStop = stop['id']?.toString() == _selectedStopId();
 
     final chipColor = isNextStop
         ? const Color(0xFFF59E0B)
@@ -2541,8 +2642,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
     final distanceAheadMeters = stopRouteDistance - _currentRouteDistanceMeters;
     final isPassedStop = distanceAheadMeters < -_stopArrivalRadiusMeters;
     final isNextStop = index == _nextStopIndex;
-    final isSelectedStop =
-        stop['id']?.toString() == widget.stopInfo['id']?.toString();
+    final isSelectedStop = stop['id']?.toString() == _selectedStopId();
     final isArrivingNear = isNextStop && _distanceToNextStopMeters <= 200;
 
     final rawArrival = stop['arrival_time']?.toString() ?? '--:--';
@@ -2594,179 +2694,202 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         ? const Color(0xFF2563EB)
         : const Color(0xFFF59E0B);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 60,
-          child: Column(
-            children: [
-              Text(
-                shortArrival,
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: isPassedStop
-                      ? const Color(0xFF94A3B8)
-                      : const Color(0xFF1E293B),
-                  fontSize: 14,
-                ),
-              ),
-              const Text(
-                'SCH',
-                style: TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _selectStopFromTimeline(stop),
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+          decoration: BoxDecoration(
+            color: isSelectedStop
+                ? const Color(0xFFDBEAFE).withValues(alpha: 0.5)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isSelectedStop
+                  ? const Color(0xFF93C5FD)
+                  : Colors.transparent,
+            ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            children: [
-              Container(
-                width: 2,
-                height: 30,
-                color: isFirst ? Colors.transparent : const Color(0xFFE2E8F0),
-              ),
-              Container(
-                key: dotKey,
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: dotColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: borderColor, width: 3),
-                ),
-                child: isArrivingNear
-                    ? const Icon(
-                        LucideIcons.zap,
-                        color: Colors.white,
-                        size: 8,
-                      )
-                    : null,
-              ),
-              Container(
-                width: 2,
-                height: 60,
-                color: isLast ? Colors.transparent : const Color(0xFFE2E8F0),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: Column(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 2),
-              Text(
-                stop['stop_name']?.toString() ?? 'Stop',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  color: isArrivingNear
-                      ? const Color(0xFFF59E0B)
-                      : isPassedStop
-                          ? const Color(0xFF94A3B8)
-                          : const Color(0xFF1E293B),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Icon(
-                    LucideIcons.mapPin,
-                    size: 12,
-                    color: isArrivingNear
-                        ? const Color(0xFFF59E0B)
-                        : const Color(0xFF94A3B8),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      distanceLabel,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+              SizedBox(
+                width: 60,
+                child: Column(
+                  children: [
+                    Text(
+                      shortArrival,
                       style: TextStyle(
-                        color: isArrivingNear
-                            ? const Color(0xFFF59E0B)
-                            : const Color(0xFF94A3B8),
-                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color: isPassedStop
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF1E293B),
+                        fontSize: 14,
+                      ),
+                    ),
+                    const Text(
+                      'SCH',
+                      style: TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              if (!isPassedStop) ...[
-                const SizedBox(height: 8),
-                Text(
-                  projectedArrivalLabel == null
-                      ? 'Expected arrival updating'
-                      : 'Expected $projectedArrivalLabel',
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
                   children: [
-                    _buildTimelineInfoPill(
-                      icon: LucideIcons.clock3,
-                      label: etaLabel,
-                      color: const Color(0xFFF59E0B),
+                    Container(
+                      width: 2,
+                      height: 30,
+                      color:
+                          isFirst ? Colors.transparent : const Color(0xFFE2E8F0),
                     ),
-                    _buildTimelineInfoPill(
-                      icon: etaMeta.delayStatus == 'Delayed'
-                          ? LucideIcons.timerOff
-                          : etaMeta.delayStatus == 'ETA updating'
-                              ? LucideIcons.clock3
-                              : LucideIcons.badgeCheck,
-                      label: timelineStatusLabel,
-                      color: timelineStatusColor,
+                    Container(
+                      key: dotKey,
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: dotColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: borderColor, width: 3),
+                      ),
+                      child: isArrivingNear
+                          ? const Icon(
+                              LucideIcons.zap,
+                              color: Colors.white,
+                              size: 8,
+                            )
+                          : null,
+                    ),
+                    Container(
+                      width: 2,
+                      height: 60,
+                      color:
+                          isLast ? Colors.transparent : const Color(0xFFE2E8F0),
                     ),
                   ],
                 ),
-              ],
-              const SizedBox(height: 12),
-              if (isArrivingNear || isSelectedStop)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: (isSelectedStop
-                            ? const Color(0xFF2563EB)
-                            : const Color(0xFFF59E0B))
-                        .withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isArrivingNear
-                        ? 'NEAR THIS STOP'
-                        : isSelectedStop
-                            ? 'YOUR STOP'
-                            : 'ACTIVE',
-                    style: TextStyle(
-                      color: isSelectedStop
-                          ? const Color(0xFF2563EB)
-                          : const Color(0xFFF59E0B),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 10,
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 2),
+                    Text(
+                      stop['stop_name']?.toString() ?? 'Stop',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        color: isArrivingNear
+                            ? const Color(0xFFF59E0B)
+                            : isPassedStop
+                                ? const Color(0xFF94A3B8)
+                                : const Color(0xFF1E293B),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          LucideIcons.mapPin,
+                          size: 12,
+                          color: isArrivingNear
+                              ? const Color(0xFFF59E0B)
+                              : const Color(0xFF94A3B8),
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            distanceLabel,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isArrivingNear
+                                  ? const Color(0xFFF59E0B)
+                                  : const Color(0xFF94A3B8),
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!isPassedStop) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        projectedArrivalLabel == null
+                            ? 'Expected arrival updating'
+                            : 'Expected $projectedArrivalLabel',
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _buildTimelineInfoPill(
+                            icon: LucideIcons.clock3,
+                            label: etaLabel,
+                            color: const Color(0xFFF59E0B),
+                          ),
+                          _buildTimelineInfoPill(
+                            icon: etaMeta.delayStatus == 'Delayed'
+                                ? LucideIcons.timerOff
+                                : etaMeta.delayStatus == 'ETA updating'
+                                    ? LucideIcons.clock3
+                                    : LucideIcons.badgeCheck,
+                            label: timelineStatusLabel,
+                            color: timelineStatusColor,
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    if (isArrivingNear || isSelectedStop)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (isSelectedStop
+                                  ? const Color(0xFF2563EB)
+                                  : const Color(0xFFF59E0B))
+                              .withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          isArrivingNear
+                              ? 'NEAR THIS STOP'
+                              : isSelectedStop
+                                  ? 'SELECTED STOP'
+                                  : 'ACTIVE',
+                          style: TextStyle(
+                            color: isSelectedStop
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFFF59E0B),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
+              ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

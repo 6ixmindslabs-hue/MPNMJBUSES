@@ -1,99 +1,141 @@
-# MPNMJEC Transport Intelligence System — Project Report
+# MPNMJEC Transport Intelligence System — Updated Project Report
 
-## 1. Project Overview
-The **MPNMJEC Transport Intelligence System** is a sophisticated, real-time fleet management and tracking solution designed for college transportation. It provides a seamless experience for three distinct user groups: **Admins** (oversight), **Drivers** (operational tracking), and **Students/Staff** (real-time arrival monitoring).
-
----
-
-## 2. System Architecture
-The system follows a modern, distributed architecture:
-- **Backend Hub:** Central Node.js server handling WebSocket connections and trip lifecycle logic.
-- **Data Layer:** Supabase (PostgreSQL) for persistent storage and real-time database subscriptions.
-- **Admin Control Center:** React-based web dashboard for fleet management.
-- **Mobile Ecosystem:** Flutter apps for both Drivers (GPS broadcasting) and Students (Live tracking).
+This report reflects recent enhancements to the **MPNMJEC Transport Intelligence System (MPNMJBUSES)**, with a focus on improving real-time accessibility and user flexibility through live bus discovery features.
 
 ---
 
-## 3. Component Breakdown
+## 1. Executive Summary
 
-### A. Backend (Tracking Server)
-- **Role:** The "Brain" of the system.
-- **Main Technologies:** `Node.js`, `Express`, `ws` (WebSockets), `jsonwebtoken`.
-- **Core Logics:**
-    - **Live Telemetry Ingestion:** Processes high-frequency GPS data from drivers via WebSockets.
-    - **Trip Lifecycle Management:** Manages transition between `started`, `running`, `paused`, and `completed` states.
-    - **Live Route Snap:** Snaps raw GPS points to the predefined route geometry to provide smooth UI updates.
-    - **ETA & Delay Engine:** Calculates arrival times and delay statuses based on current speed and scheduled stop times.
+The system continues to operate as a **real-time fleet tracking and transport management platform** with a distributed architecture:
 
-### B. Admin Panel (Web)
-- **Role:** Fleet, Personnel, and Strategy Management.
-- **Main Technologies:** `React 19`, `Vite`, `Tailwind CSS`, `Leaflet` (Mapping), `Zustand` (State management).
-- **Key Features:**
-    - **Synergy Strategy (Scheduling):** Single daily schedule assignment with route readiness checks and assignment validation.
-    - **Route & Stop Architect:** Point-and-click interface for defining corridors and passenger pickup points.
-    - **Mission Monitor:** Real-time dashboard showing the status of all active hardware (buses) and operators (drivers).
-    - **Fleet Simulator:** Allows admins to simulate bus movement for system testing.
+- Node.js + Supabase backend
+- React-based admin dashboard
+- Flutter mobile apps for students and drivers
 
-### C. Driver App (Mobile)
-- **Role:** Operational Gateway & GPS Broadcaster.
-- **Main Technologies:** `Flutter`, `Geolocator`, `Flutter Foreground Task`.
-- **Key Features:**
-    - **Background Tracking:** Continues to stream GPS data even when the phone screen is off or the app is minimized.
-    - **Daily Trip Start:** Simple interface for drivers to open their assigned route and start the day’s live trip.
-    - **Real-time Status Sync:** Keeps the driver informed if they are on-route or delayed.
-
-### D. Student App (Mobile)
-- **Role:** Passenger Awareness & Live Tracking.
-- **Main Technologies:** `Flutter`, `Flutter Map`, `AudioPlayers`.
-- **Key Features:**
-    - **Live Radar:** Real-time map view showing all active buses.
-    - **Intelligent Search:** Quick filter by route name with local search history.
-    - **Bus Alarm:** (Infrastructure ready) For notifying students when a bus is nearing their stop.
-    - **ETA Transparency:** Shows exactly how many minutes away the bus is and its delay status.
+The latest update introduces a **Live Bus Discovery** feature, designed to complement, not replace, the existing route-based workflow by enabling instant access to active buses.
 
 ---
 
-## 4. Database Schema (Supabase)
-The database is structured for high-performance tracking and historical auditing:
-- `drivers`: Personnel records and authentication.
-- `buses`: Hardware records (Capacity, Reg Number).
-- `routes`: Geospacial corridors (Start/End locations).
-- `stops`: Sequence-based passenger nodes with scheduled arrival times.
-- `schedules`: The link between a Driver, Bus, and Route for the single daily service.
-- `trips`: Active instances of a schedule.
-- `telemetry`: Historical GPS logs (latitude, longitude, speed, heading).
+## 2. Key Feature Addition — Live Bus Discovery
+
+### Purpose
+
+This feature is designed for users who:
+
+- Do not want to go through pickup and destination selection
+- Prefer quick access to currently active buses
+- Need immediate tracking without navigation friction
 
 ---
 
-## 5. Core Business Logics
+## 3. Student App Enhancements
 
-### I. Daily Assignment Guard
-Prevents administrative errors by ensuring a driver or bus cannot be double-booked. Each driver and bus can hold only one daily schedule and one active trip at a time.
+### A. Live Buses Now Section
 
-### II. Dynamic ETA Logic
-ETAs are recalculated on every GPS heartbeat (approx 3-5 seconds). The algorithm considers:
-- Distances along the route path (not just "as the crow flies").
-- Current vehicle speed.
-- Configurable minimum speeds to prevent "infinite ETAs" when the bus is stopped.
+- Added a new **Live Buses Now** section on the home screen
+- Fetches real-time active trips from `/trips/active`
+- Displays:
+  - Bus number
+  - Route name
+  - Trip direction (`Outbound` / `Return`)
+  - Next stop, when available
 
-### III. Path Smoothing & Snapping
-Raw GPS signals are often "jittery." The backend uses Haversine calculations and projection math to snap the bus marker to the road, ensuring a premium visual experience for students.
+### B. Data Handling Improvements
+
+- Implemented normalization and deduplication of active trips
+- Ensures:
+  - No duplicate bus entries
+  - Clean and consistent UI data
+- Introduced new state management:
+  - `_activeLiveBuses`
+  - `_fetchingLiveBuses`
+  - `_liveBusesError`
+
+### C. UI State Visibility
+
+Improved user feedback with explicit UI states:
+
+- Loading state while fetching buses
+- Empty state when no active buses are available
+- Error state for API or network failures
+
+This prevents silent UI failures and improves reliability.
+
+### D. Direct Live Tracking Access
+
+- Users can tap a live bus card to directly open `LiveTrackingScreen`
+- This acts as an **optional shortcut**
+- The existing stop-selection workflow remains unchanged
 
 ---
 
-## 6. Library & Tooling Report
+## 4. Live Tracking Screen Improvements
 
-| Component | Key Library | Purpose |
-| :--- | :--- | :--- |
-| **Backend** | `ws` | Real-time high-speed data transfer |
-| **Backend** | `jsonwebtoken` | Secure driver authentication |
-| **Admin** | `react-leaflet` | Interactive map rendering |
-| **Admin** | `zustand` | Lightweight global state management |
-| **Mobile** | `geolocator` | High-precision GPS access |
-| **Mobile** | `flutter_map` | Open-source map tiling for mobile |
-| **Mobile** | `shared_preferences` | Local storage for search history |
+### A. Flexible Entry Support
+
+- `stopInfo` is now optional
+- Allows users to enter tracking without preselecting a stop
+
+### B. Internal Stop Management
+
+- Introduced `_selectedStopInfo` for dynamic state handling
+- Enables:
+  - Late stop selection
+  - Flexible tracking flow
+
+### C. Interactive Timeline
+
+- Timeline rows are now tappable
+- Selected stops are visually highlighted
+- Added `_selectStopFromTimeline` method
+
+### D. Improved Fault Handling
+
+- Stop alarm panel works even without a preselected stop
+- Added fallback logic for bus data:
+  - Supports both `trip['buses']` and `schedules['buses']`
 
 ---
 
-## 7. Operational Status
-The project is currently in a state-of-the-art implementation phase, featuring premium UI aesthetics (glassmorphism/dark mode) and robust backend fail-safes (Active Trip Guards).
+## 5. Backend Dependency Observation
+
+- The `/trips/active` endpoint currently returns an empty array (`[]`) during testing
+- Live feature visibility depends on:
+  - Active trip sessions
+  - Driver app telemetry being active
+
+---
+
+## 6. Configuration Updates
+
+- API Base URL: `https://mpnmjec-trackingserver.onrender.com/api`
+- WebSocket Base URL: `wss://mpnmjec-trackingserver.onrender.com/ws`
+
+---
+
+## 7. Testing & Build Status
+
+- Flutter analysis: clean, no issues reported
+- Web preview tested locally
+- Android APK generated (debug signed for testing)
+
+---
+
+## 8. Impact Summary
+
+This update introduces:
+
+- Faster access to live bus tracking
+- Reduced friction for real-time users
+- Improved UI transparency and reliability
+- Greater flexibility in the tracking flow
+
+Importantly, this feature **enhances the existing system without disrupting current user workflows**.
+
+---
+
+## 9. Scope Clarification
+
+- No backend changes were made in this update
+- Existing route-based tracking flow remains intact
+- Changes are limited to student app UX and configuration updates
