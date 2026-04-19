@@ -1,4 +1,4 @@
-package in.edu.mpnmjec.student;
+package com.sixmindslabs.mpnmjec.student;
 
 import io.flutter.embedding.android.FlutterActivity;
 

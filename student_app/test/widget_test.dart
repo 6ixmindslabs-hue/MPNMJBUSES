@@ -6,6 +6,7 @@ void main() {
   testWidgets('Student app loads search screen', (WidgetTester tester) async {
     await tester.pumpWidget(const StudentApp());
 
-    expect(find.textContaining('Where are you'), findsOneWidget);
+    expect(find.textContaining('How would you like'), findsOneWidget);
+    expect(find.text('Track Instantly'), findsOneWidget);
   });
 }
