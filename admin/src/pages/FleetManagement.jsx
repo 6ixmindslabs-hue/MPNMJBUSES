@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Bus, Settings, Plus, Search, MapPin, MoreVertical, Trash2, Edit2, Shield, Users as UsersIcon, Fuel } from 'lucide-react';
 
@@ -12,22 +12,17 @@ const FleetManagement = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newBus, setNewBus] = useState({ registration_number: '', capacity: '', status: 'active' });
 
-  useEffect(() => {
-    fetchBuses();
-    fetchLiveTripStates();
-  }, []);
-
-  const fetchBuses = async () => {
+  const fetchBuses = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('buses')
       .select('*, drivers(license_number, users(full_name))');
     
     if (data) setBuses(data);
     setLoading(false);
-  };
+  }, []);
 
-  const fetchLiveTripStates = async () => {
+  const fetchLiveTripStates = useCallback(async () => {
     try {
       const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
       if (!response.ok) return;
@@ -47,11 +42,16 @@ const FleetManagement = () => {
     } catch {
       // Ignore transient failures; fleet table still renders from Supabase.
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchBuses();
+    fetchLiveTripStates();
+  }, [fetchBuses, fetchLiveTripStates]);
 
   const handleAddBus = async (e) => {
     e.preventDefault();
-    const { data, error } = await supabase.from('buses').insert([newBus]).select();
+    const { data } = await supabase.from('buses').insert([newBus]).select();
     if (data) {
       setBuses([...buses, ...data]);
       setShowAddModal(false);

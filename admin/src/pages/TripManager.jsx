@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Map, Calendar, Clock, UserCheck, Play, Pause, Square, AlertCircle, RefreshCw, ArrowRight, User, Hash } from 'lucide-react';
 import { format } from 'date-fns';
@@ -16,33 +16,7 @@ const TripManager = () => {
   const [drivers, setDrivers] = useState([]);
   const [assignForm, setAssignForm] = useState({ bus_id: '', driver_id: '' });
 
-  useEffect(() => {
-    fetchTrips();
-    fetchResources();
-    fetchActiveTripMeta();
-    
-    const channel = supabase
-      .channel('trips_status_updates')
-      .on('postgres_changes', { event: 'UPDATE', table: 'trips' }, fetchTrips)
-      .subscribe();
-
-    return () => supabase.removeChannel(channel);
-  }, []);
-
-  const fetchTrips = async () => {
-    setLoading(true);
-    const { data } = await supabase
-      .from('trips')
-      .select('*, buses(registration_number), routes(name), drivers:driver_id(users(full_name))')
-      .order('scheduled_start_time', { ascending: false })
-      .limit(50);
-      
-    if (data) setTrips(data);
-    fetchActiveTripMeta();
-    setLoading(false);
-  };
-
-  const fetchActiveTripMeta = async () => {
+  const fetchActiveTripMeta = useCallback(async () => {
     try {
       const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
       if (!response.ok) return;
@@ -64,15 +38,41 @@ const TripManager = () => {
     } catch {
       // Keep stale snapshot until next successful refresh.
     }
-  };
+  }, []);
 
-  const fetchResources = async () => {
+  const fetchTrips = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('trips')
+      .select('*, buses(registration_number), routes(name), drivers:driver_id(users(full_name))')
+      .order('scheduled_start_time', { ascending: false })
+      .limit(50);
+      
+    if (data) setTrips(data);
+    fetchActiveTripMeta();
+    setLoading(false);
+  }, [fetchActiveTripMeta]);
+
+  const fetchResources = useCallback(async () => {
     const { data: busData } = await supabase.from('buses').select('id, registration_number').eq('status', 'active');
     const { data: driverData } = await supabase.from('users').select('id, full_name').eq('role', 'driver');
     
     if (busData) setBuses(busData);
     if (driverData) setDrivers(driverData);
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchTrips();
+    fetchResources();
+    fetchActiveTripMeta();
+    
+    const channel = supabase
+      .channel('trips_status_updates')
+      .on('postgres_changes', { event: 'UPDATE', table: 'trips' }, fetchTrips)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [fetchActiveTripMeta, fetchResources, fetchTrips]);
 
   const openAssignModal = (trip) => {
     setSelectedTrip(trip);

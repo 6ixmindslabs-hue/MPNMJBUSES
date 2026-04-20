@@ -18,7 +18,7 @@ export const AuthProvider = ({ children }) => {
         setProfile(profile);
         setLoading(false);
         return; // Skip Supabase check if we have a dev session
-      } catch (e) {
+      } catch {
         localStorage.removeItem('mpnmjec_dev_session');
       }
     }
@@ -50,7 +50,7 @@ export const AuthProvider = ({ children }) => {
 
   const fetchProfile = async (uid) => {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('users')
         .select('*')
         .eq('id', uid)
@@ -91,4 +91,5 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

@@ -590,7 +590,7 @@ class _TripScreenState extends State<TripScreen> {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.amber.shade900.withOpacity(0.3),
+                      color: Colors.amber.shade900.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.amber.shade700),
                     ),
@@ -677,7 +677,7 @@ class _TripScreenState extends State<TripScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.15)),
+        border: Border.all(color: color.withValues(alpha: 0.15)),
       ),
       child: Row(
         children: [
@@ -688,7 +688,7 @@ class _TripScreenState extends State<TripScreen> {
               color: color,
               shape: BoxShape.circle,
               boxShadow: [
-                BoxShadow(color: color.withOpacity(0.45), blurRadius: 8),
+                BoxShadow(color: color.withValues(alpha: 0.45), blurRadius: 8),
               ],
             ),
           ),
@@ -812,9 +812,9 @@ class _TripScreenState extends State<TripScreen> {
                 color: const Color(0xFFDCFCE7),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: Text(
+              child: const Text(
                 'READY',
-                style: const TextStyle(
+                style: TextStyle(
                   color: Color(0xFF166534),
                   fontSize: 10,
                   fontWeight: FontWeight.w900,
@@ -848,7 +848,7 @@ class _TripScreenState extends State<TripScreen> {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.15),
+              color: iconColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, color: iconColor),
@@ -901,7 +901,7 @@ class _TripScreenState extends State<TripScreen> {
           borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: gradientColors.last.withOpacity(0.4),
+              color: gradientColors.last.withValues(alpha: 0.4),
               blurRadius: 20,
               offset: const Offset(0, 8),
             ),

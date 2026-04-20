@@ -16,7 +16,6 @@ const stopIcon = L.divIcon({
 
 const RouteManager = () => {
   const [routes, setRoutes] = useState([]);
-  const [stops, setStops] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedRoute, setSelectedRoute] = useState(null);
   
@@ -25,7 +24,6 @@ const RouteManager = () => {
 
   useEffect(() => {
     fetchRoutes();
-    fetchStops();
   }, []);
 
   const fetchRoutes = async () => {
@@ -41,11 +39,6 @@ const RouteManager = () => {
     setLoading(false);
   };
 
-  const fetchStops = async () => {
-    const { data: stopData } = await supabase.from('stops').select('*');
-    if (stopData) setStops(stopData);
-  };
-
   const MapClickHandler = () => {
     useMapEvents({
       click(e) {
@@ -59,7 +52,7 @@ const RouteManager = () => {
   };
 
   const handleSaveRoute = async () => {
-    const { data, error } = await supabase.from('routes').insert([{
+    const { data } = await supabase.from('routes').insert([{
       name: newRouteData.name,
       description: newRouteData.description,
       polyline: newRouteData.polyline

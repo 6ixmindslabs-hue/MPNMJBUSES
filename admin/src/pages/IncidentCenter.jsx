@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { AlertTriangle, CheckCircle, Info, MessageSquare, Clock, ShieldAlert } from 'lucide-react';
 import { format } from 'date-fns';
@@ -6,6 +6,17 @@ import { format } from 'date-fns';
 const IncidentCenter = () => {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const fetchAlerts = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('alerts')
+      .select('*, trips(id, status, buses(registration_number), routes(name), drivers:driver_id(users(full_name, phone_number)))')
+      .order('created_at', { ascending: false });
+
+    if (data) setAlerts(data);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     fetchAlerts();
@@ -16,18 +27,7 @@ const IncidentCenter = () => {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, []);
-
-  const fetchAlerts = async () => {
-    setLoading(true);
-    const { data } = await supabase
-      .from('alerts')
-      .select('*, trips(id, status, buses(registration_number), routes(name), drivers:driver_id(users(full_name, phone_number)))')
-      .order('created_at', { ascending: false });
-
-    if (data) setAlerts(data);
-    setLoading(false);
-  };
+  }, [fetchAlerts]);
 
   const resolveAlert = async (alertId) => {
     const { error } = await supabase

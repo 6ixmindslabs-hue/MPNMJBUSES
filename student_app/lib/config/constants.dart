@@ -1,16 +1,34 @@
+import 'package:flutter/foundation.dart';
+
 class AppConfig {
+  static const String _productionApiBase =
+      'https://mpnmjec-trackingserver.onrender.com/api';
+  static const String _productionWsBase =
+      'wss://mpnmjec-trackingserver.onrender.com/ws';
+  static const String _localWebApiBase = 'http://localhost:3001/api';
+  static const String _localWebWsBase = 'ws://localhost:3001/ws';
+
+  static String _normalizeApiBase(String value) {
+    final normalized = value.endsWith('/')
+        ? value.substring(0, value.length - 1)
+        : value;
+    return normalized.endsWith('/api') ? normalized : '$normalized/api';
+  }
+
   static String get apiBase {
     const override = String.fromEnvironment('TRACKING_API_URL', defaultValue: '');
     if (override.isNotEmpty) {
-      return override.endsWith('/api') ? override : '$override/api';
+      return _normalizeApiBase(override);
     }
-    return 'https://mpnmjec-trackingserver.onrender.com/api';
+    if (kIsWeb && !kReleaseMode) return _localWebApiBase;
+    return _productionApiBase;
   }
 
   static String get wsBase {
     const override = String.fromEnvironment('TRACKING_WS_URL', defaultValue: '');
     if (override.isNotEmpty) return override;
-    return 'wss://mpnmjec-trackingserver.onrender.com/ws';
+    if (kIsWeb && !kReleaseMode) return _localWebWsBase;
+    return _productionWsBase;
   }
 
   static String get effectiveApiBase => apiBase;

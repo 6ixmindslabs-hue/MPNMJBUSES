@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -40,21 +40,7 @@ const Dashboard = () => {
   const [activeTrips, setActiveTrips] = useState([]);
   const [stats, setStats] = useState({ active: 0, delayed: 0, incidents: 0 });
 
-  useEffect(() => {
-    fetchActiveTrips();
-
-    const channel = supabase
-      .channel('live-ops')
-      .on('postgres_changes', { event: '*', table: 'trips' }, fetchActiveTrips)
-      .on('postgres_changes', { event: 'INSERT', table: 'telemetry' }, fetchActiveTrips)
-      .subscribe();
-
-    return () => {
-      if (channel) supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const fetchActiveTrips = async () => {
+  const fetchActiveTrips = useCallback(async () => {
     try {
       const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
       if (!response.ok) return;
@@ -68,7 +54,21 @@ const Dashboard = () => {
     } catch {
       // Keep previous snapshot on transient API failures.
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchActiveTrips();
+
+    const channel = supabase
+      .channel('live-ops')
+      .on('postgres_changes', { event: '*', table: 'trips' }, fetchActiveTrips)
+      .on('postgres_changes', { event: 'INSERT', table: 'telemetry' }, fetchActiveTrips)
+      .subscribe();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [fetchActiveTrips]);
 
   return (
     <div className="h-full flex flex-col gap-6">
@@ -183,7 +183,7 @@ const Dashboard = () => {
                   <div className="flex items-center gap-2 text-[11px] text-slate-500">
                     <MapPin size={12} />
                     <span className="truncate">
-                      {trip.schedules?.buses?.bus_number || '-'} • {trip.is_online ? 'Online' : 'Offline'}
+                      {trip.schedules?.buses?.bus_number || '-'} - {trip.is_online ? 'Online' : 'Offline'}
                     </span>
                   </div>
                   {trip.delay_status === 'Delayed' && (

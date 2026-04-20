@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { BarChart3, Download, Calendar, Filter, FileText, TrendingUp, Users, Clock } from 'lucide-react';
-import { format, startOfDay, endOfDay, subDays } from 'date-fns';
+import { format, subDays } from 'date-fns';
 
 const Reports = () => {
   const [reportData, setReportData] = useState([]);
@@ -11,11 +11,7 @@ const Reports = () => {
     end: format(new Date(), 'yyyy-MM-dd')
   });
 
-  useEffect(() => {
-    fetchReport();
-  }, [dateRange]);
-
-  const fetchReport = async () => {
+  const fetchReport = useCallback(async () => {
     setLoading(true);
     // Fetch trips in date range
     const { data } = await supabase
@@ -27,7 +23,11 @@ const Reports = () => {
 
     if (data) setReportData(data);
     setLoading(false);
-  };
+  }, [dateRange.end, dateRange.start]);
+
+  useEffect(() => {
+    fetchReport();
+  }, [fetchReport]);
 
   const stats = {
     totalTrips: reportData.length,

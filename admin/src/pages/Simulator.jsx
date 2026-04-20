@@ -36,7 +36,7 @@ const Simulator = () => {
       }
       setDemoData({ trip });
       addLog('Environment ready for LIVE simulation.', 'success');
-    } catch (e) {
+    } catch {
       addLog('DB Seed failed (Using Virtual Mode instead)', 'warning');
     }
   };

@@ -8,8 +8,32 @@ const { setupWebSocketServer } = require('./src/websocket/wsServer');
 
 const app = express();
 
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowAllOrigins =
+  configuredOrigins.length === 0 || configuredOrigins.includes('*');
+
+function isLocalDevOrigin(origin) {
+  if (process.env.NODE_ENV === 'production' || !origin) return false;
+
+  try {
+    const url = new URL(origin);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+  origin(origin, callback) {
+    if (!origin || allowAllOrigins || configuredOrigins.includes(origin) || isLocalDevOrigin(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origin ${origin} not allowed by CORS`));
+  },
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));

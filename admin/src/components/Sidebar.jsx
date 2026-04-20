@@ -7,7 +7,6 @@ import {
   LogOut
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 const drawerItems = [
