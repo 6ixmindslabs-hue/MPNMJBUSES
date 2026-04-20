@@ -50,8 +50,8 @@ STOP_ARRIVAL_RADIUS_METERS=80
 Ensure-File -Path (Join-Path $adminDir '.env.local') -Content @'
 VITE_SUPABASE_URL=https://placeholder.supabase.co
 VITE_SUPABASE_ANON_KEY=placeholder-anon-key
-VITE_TRACKING_API_URL=http://localhost:3001/api
-VITE_TRACKING_WS_URL=ws://localhost:3001/ws
+VITE_TRACKING_API_URL=https://mpnmjec-backend.onrender.com/api
+VITE_TRACKING_WS_URL=wss://mpnmjec-backend.onrender.com/ws
 '@
 
 Ensure-NodeModules -Path $backendDir
@@ -67,4 +67,5 @@ Write-Output 'Started local services in two PowerShell windows.'
 Write-Output 'Backend health: http://localhost:3001/health'
 Write-Output 'Admin app:       http://localhost:5173'
 Write-Output ''
+Write-Output 'Admin tracking is configured for https://mpnmjec-backend.onrender.com by default.'
 Write-Output 'For real admin data, replace the placeholder Supabase values in backend/.env and admin/.env.local.'

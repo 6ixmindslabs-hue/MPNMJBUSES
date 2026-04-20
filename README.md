@@ -7,6 +7,11 @@ Local workspace for the MPNMJEC transport platform:
 - `student_app` - Flutter student app
 - `driver_app` - Flutter driver app
 
+Default tracking backend:
+
+- API: `https://mpnmjec-backend.onrender.com/api`
+- WebSocket: `wss://mpnmjec-backend.onrender.com/ws`
+
 ## Run Backend And Admin Locally
 
 From the repo root:
@@ -20,6 +25,8 @@ This starts:
 - Backend: `http://localhost:3001`
 - Backend health: `http://localhost:3001/health`
 - Admin dashboard: `http://localhost:5173`
+
+The admin dashboard still points to the configured Render backend by default.
 
 Admin dev login:
 
@@ -41,7 +48,7 @@ Android emulator:
 
 ```powershell
 cd student_app
-flutter run --dart-define=TRACKING_API_URL=http://10.0.2.2:3001 --dart-define=TRACKING_WS_URL=ws://10.0.2.2:3001/ws
+flutter run
 ```
 
 ## Run Driver App Locally
@@ -57,7 +64,7 @@ Android emulator:
 
 ```powershell
 cd driver_app
-flutter run --dart-define=TRACKING_API_URL=http://10.0.2.2:3001 --dart-define=TRACKING_WS_URL=ws://10.0.2.2:3001/ws
+flutter run
 ```
 
 ## Manual Setup Commands

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Bus, Settings, Plus, Search, MapPin, MoreVertical, Trash2, Edit2, Shield, Users as UsersIcon, Fuel } from 'lucide-react';
 
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 
 const FleetManagement = () => {
   const [buses, setBuses] = useState([]);

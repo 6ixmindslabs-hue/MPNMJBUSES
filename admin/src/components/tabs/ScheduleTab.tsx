@@ -8,7 +8,7 @@ import { TableSkeleton } from '../ui/Skeleton';
 import { ConfirmModal } from '../ui/Modal';
 import { Calendar, Clock, UserCheck, Trash2, Edit2, Link as LinkIcon, Compass, Activity, SearchX, ChevronLeft, ChevronRight } from 'lucide-react';
 
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 const DAILY_SCHEDULE_TYPE = 'daily' as const;
 const DIRECTIONS = ['outbound', 'return'] as const;
 

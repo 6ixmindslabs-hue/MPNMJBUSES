@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import { supabase } from '../lib/supabase';
 import { Bus, MapPin, Clock, Phone, AlertTriangle, Activity } from 'lucide-react';
 
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 
 // Fix Leaflet marker icons
 delete L.Icon.Default.prototype._getIconUrl;

@@ -108,8 +108,8 @@ This prevents silent UI failures and improves reliability.
 
 ## 6. Configuration Updates
 
-- API Base URL: `https://mpnmjec-trackingserver.onrender.com/api`
-- WebSocket Base URL: `wss://mpnmjec-trackingserver.onrender.com/ws`
+- API Base URL: `https://mpnmjec-backend.onrender.com/api`
+- WebSocket Base URL: `wss://mpnmjec-backend.onrender.com/ws`
 
 ---
 

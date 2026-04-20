@@ -1,12 +1,8 @@
-import 'package:flutter/foundation.dart';
-
 class AppConfig {
-  static const String _productionApiBase =
-      'https://mpnmjec-trackingserver.onrender.com/api';
-  static const String _productionWsBase =
-      'wss://mpnmjec-trackingserver.onrender.com/ws';
-  static const String _localWebApiBase = 'http://localhost:3001/api';
-  static const String _localWebWsBase = 'ws://localhost:3001/ws';
+  static const String _defaultApiBase =
+      'https://mpnmjec-backend.onrender.com/api';
+  static const String _defaultWsBase =
+      'wss://mpnmjec-backend.onrender.com/ws';
 
   static String _trimTrailingSlash(String value) {
     if (value.endsWith('/')) {
@@ -21,15 +17,13 @@ class AppConfig {
       final normalized = _trimTrailingSlash(override);
       return normalized.endsWith('/api') ? normalized : '$normalized/api';
     }
-    if (kIsWeb && !kReleaseMode) return _localWebApiBase;
-    return _productionApiBase;
+    return _defaultApiBase;
   }
 
   static String get trackingWsUrl {
     const override = String.fromEnvironment('TRACKING_WS_URL', defaultValue: '');
     if (override.isNotEmpty) return _trimTrailingSlash(override);
-    if (kIsWeb && !kReleaseMode) return _localWebWsBase;
-    return _productionWsBase;
+    return _defaultWsBase;
   }
 
   // Tracking settings

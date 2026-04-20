@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { Map, Calendar, Clock, UserCheck, Play, Pause, Square, AlertCircle, RefreshCw, ArrowRight, User, Hash } from 'lucide-react';
 import { format } from 'date-fns';
 
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-trackingserver.onrender.com/api';
+const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 
 const TripManager = () => {
   const [trips, setTrips] = useState([]);
