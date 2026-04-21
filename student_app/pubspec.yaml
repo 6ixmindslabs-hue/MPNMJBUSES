@@ -1,6 +1,6 @@
 name: student_app
 description: MPNMJEC Student App - Real-time Bus Tracking for Students and Staff
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
