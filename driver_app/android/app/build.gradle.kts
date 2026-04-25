@@ -15,7 +15,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "in.edu.mpnmjec.driver"
+    namespace = "com.sixmindslabs.mpnmjec.driver"
     compileSdk = 36
     // ndkVersion = flutter.ndkVersion
 
@@ -29,7 +29,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "in.edu.mpnmjec.driver"
+        applicationId = "com.sixmindslabs.mpnmjec.driver"
         minSdk = 24
         targetSdk = 36
         versionCode = flutter.versionCode
