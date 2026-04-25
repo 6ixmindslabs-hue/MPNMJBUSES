@@ -11,3 +11,7 @@
 
 # Just to be safe with geolocator
 -keep class com.baseflow.geolocator.** { *; }
+
+# Google Play Core
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.** { *; }
