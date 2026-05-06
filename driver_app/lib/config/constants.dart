@@ -1,8 +1,6 @@
 class AppConfig {
-  static const String _defaultApiBase =
-      'https://mpnmjec-backend.onrender.com/api';
-  static const String _defaultWsBase =
-      'wss://mpnmjec-backend.onrender.com/ws';
+  static const String _defaultBackendBase =
+      'https://mpnmjec-backend.onrender.com/';
 
   static String _trimTrailingSlash(String value) {
     if (value.endsWith('/')) {
@@ -12,18 +10,43 @@ class AppConfig {
   }
 
   static String get trackingServerUrl {
-    const override = String.fromEnvironment('TRACKING_API_URL', defaultValue: '');
+    const override =
+        String.fromEnvironment('TRACKING_API_URL', defaultValue: '');
+    const backendOverride =
+        String.fromEnvironment('TRACKING_BACKEND_URL', defaultValue: '');
     if (override.isNotEmpty) {
       final normalized = _trimTrailingSlash(override);
       return normalized.endsWith('/api') ? normalized : '$normalized/api';
     }
-    return _defaultApiBase;
+
+    final backend = _trimTrailingSlash(
+      backendOverride.isNotEmpty ? backendOverride : _defaultBackendBase,
+    );
+    return backend.endsWith('/api') ? backend : '$backend/api';
   }
 
   static String get trackingWsUrl {
-    const override = String.fromEnvironment('TRACKING_WS_URL', defaultValue: '');
-    if (override.isNotEmpty) return _trimTrailingSlash(override);
-    return _defaultWsBase;
+    const override =
+        String.fromEnvironment('TRACKING_WS_URL', defaultValue: '');
+    const backendOverride =
+        String.fromEnvironment('TRACKING_BACKEND_URL', defaultValue: '');
+    final value = _trimTrailingSlash(
+      override.isNotEmpty
+          ? override
+          : backendOverride.isNotEmpty
+              ? backendOverride
+              : _defaultBackendBase,
+    );
+    if (value.endsWith('/ws')) return value;
+
+    final backendBase =
+        value.endsWith('/api') ? value.substring(0, value.length - 4) : value;
+    final wsBase = backendBase.startsWith('https://')
+        ? backendBase.replaceFirst('https://', 'wss://')
+        : backendBase.startsWith('http://')
+            ? backendBase.replaceFirst('http://', 'ws://')
+            : backendBase;
+    return '$wsBase/ws';
   }
 
   // Tracking settings

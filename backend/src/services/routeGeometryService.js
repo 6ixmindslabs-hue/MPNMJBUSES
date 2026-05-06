@@ -14,26 +14,39 @@ function normalizePoint(point) {
   if (!point) return null;
 
   if (Array.isArray(point) && point.length >= 2) {
-    const [latitude, longitude] = point;
-    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    const [rawLatitude, rawLongitude] = point;
+    const latitude = Number(rawLatitude);
+    const longitude = Number(rawLongitude);
+    if (isValidCoordinate(latitude, longitude)) {
       return {
-        latitude: Number(latitude),
-        longitude: Number(longitude),
+        latitude,
+        longitude,
       };
     }
     return null;
   }
 
-  const latitude = point.latitude ?? point.lat;
-  const longitude = point.longitude ?? point.lng ?? point.lon;
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  const latitude = Number(point.latitude ?? point.lat);
+  const longitude = Number(point.longitude ?? point.lng ?? point.lon);
+  if (!isValidCoordinate(latitude, longitude)) {
     return null;
   }
 
   return {
-    latitude: Number(latitude),
-    longitude: Number(longitude),
+    latitude,
+    longitude,
   };
+}
+
+function isValidCoordinate(latitude, longitude) {
+  return (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  );
 }
 
 function normalizePointList(value) {
@@ -248,6 +261,26 @@ async function fetchOrderedStops(routeId, direction) {
   return data || [];
 }
 
+function assertStopsHaveValidCoordinates(stops) {
+  const invalidStops = (stops || []).filter((stop) => {
+    const latitude = Number(stop.latitude);
+    const longitude = Number(stop.longitude);
+    return !isValidCoordinate(latitude, longitude);
+  });
+
+  if (!invalidStops.length) return;
+
+  const details = invalidStops
+    .slice(0, 3)
+    .map(
+      (stop) =>
+        `${stop.stop_name || stop.id || 'Unnamed stop'} (${stop.latitude}, ${stop.longitude})`
+    )
+    .join('; ');
+
+  throw new Error(`Invalid coordinates for route stop: ${details}`);
+}
+
 async function requestRoadGeometry(waypoints) {
   if (!ROUTING_API_BASE_URL) {
     throw new Error('Routing API is not configured. Set ROUTING_API_BASE_URL.');
@@ -347,6 +380,7 @@ async function rebuildRouteGeometryForRoute(routeId, options = {}) {
 
   for (const pathKey of pathKeys) {
     const stops = await fetchOrderedStops(routeId, pathKey);
+    assertStopsHaveValidCoordinates(stops);
     const waypointPoints = normalizePointList(stops);
     if (waypointPoints.length < 2) {
       clearedPaths.push(pathKey);

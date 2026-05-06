@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, TRACKING_API_URL } from '../lib/supabase';
 import { Map, Calendar, Clock, UserCheck, Play, Pause, Square, AlertCircle, RefreshCw, ArrowRight, User, Hash } from 'lucide-react';
 import { format } from 'date-fns';
-
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 
 const TripManager = () => {
   const [trips, setTrips] = useState([]);
@@ -18,7 +16,7 @@ const TripManager = () => {
 
   const fetchActiveTripMeta = useCallback(async () => {
     try {
-      const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
+      const response = await fetch(`${TRACKING_API_URL}/trips/active`);
       if (!response.ok) return;
       const activeTrips = await response.json();
 

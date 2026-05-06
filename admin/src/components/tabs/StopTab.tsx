@@ -24,6 +24,19 @@ type GeometryTarget = { route_id: string };
 const DIRECTIONS = ['outbound', 'return'] as const;
 type TripDirection = (typeof DIRECTIONS)[number];
 
+const isValidCoordinate = (latitude: unknown, longitude: unknown) => {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+};
+
 // ── Component ────────────────────────────────────────────
 const StopTab = () => {
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -70,6 +83,10 @@ const StopTab = () => {
   );
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) || null;
   const activeRoutePolyline = resolveRoutePolyline(selectedRoute, activeDirection);
+  const safeFilteredStops = filteredStops.filter((stop) =>
+    isValidCoordinate(stop.latitude, stop.longitude)
+  );
+  const hasPreviewPoint = isValidCoordinate(latValue, lngValue);
 
   const rebuildGeometryTargets = async (targets: GeometryTarget[]) => {
     const uniqueTargets = Array.from(
@@ -102,6 +119,8 @@ const StopTab = () => {
     const { id, created_at, routes: _r, ...rest } = data;
     const clean = {
       ...rest,
+      latitude: Number(rest.latitude),
+      longitude: Number(rest.longitude),
       trip_direction: activeDirection,
       schedule_type: 'daily'
     };
@@ -286,20 +305,34 @@ const StopTab = () => {
                 <input
                   type="number"
                   step="any"
-                  {...register('latitude', { required: 'Required' })}
+                  {...register('latitude', {
+                    required: 'Required',
+                    valueAsNumber: true,
+                    min: { value: -90, message: 'Use -90 to 90' },
+                    max: { value: 90, message: 'Use -90 to 90' },
+                    validate: (value) => Number.isFinite(Number(value)) || 'Required',
+                  })}
                   className="input-premium text-center font-bold text-xs"
                   placeholder="0.0000"
                 />
+                {errors.latitude && <p className="text-[10px] text-red-500 text-center">{errors.latitude.message}</p>}
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center leading-none">Lng (Y)</label>
                 <input
                   type="number"
                   step="any"
-                  {...register('longitude', { required: 'Required' })}
+                  {...register('longitude', {
+                    required: 'Required',
+                    valueAsNumber: true,
+                    min: { value: -180, message: 'Use -180 to 180' },
+                    max: { value: 180, message: 'Use -180 to 180' },
+                    validate: (value) => Number.isFinite(Number(value)) || 'Required',
+                  })}
                   className="input-premium text-center font-bold text-xs"
                   placeholder="0.0000"
                 />
+                {errors.longitude && <p className="text-[10px] text-red-500 text-center">{errors.longitude.message}</p>}
               </div>
             </div>
 
@@ -344,14 +377,14 @@ const StopTab = () => {
               </>
             )}
             {/* Preview marker for the coordinate being set */}
-            {latValue && lngValue && (
+            {hasPreviewPoint && (
               <Marker
-                position={[latValue, lngValue]}
+                position={[Number(latValue), Number(lngValue)]}
                 icon={routeIcon}
               />
             )}
             {/* Stops for current direction */}
-            {filteredStops.map(s => (
+            {safeFilteredStops.map(s => (
               <Marker
                 key={s.id}
                 position={[s.latitude, s.longitude]}

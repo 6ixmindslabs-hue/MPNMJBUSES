@@ -965,7 +965,11 @@ router.post('/routes/:id/rebuild-geometry', async (req, res) => {
     });
   } catch (error) {
     const message = error.message || 'Could not rebuild route geometry';
-    const status = message.includes('At least two ordered stops') ? 400 : 500;
+    const status =
+      message.includes('At least two ordered stops') ||
+      message.includes('Invalid coordinates')
+        ? 400
+        : 500;
     return res.status(status).json({ error: message });
   }
 });

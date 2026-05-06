@@ -37,7 +37,5 @@ services:
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
-      - key: VITE_TRACKING_API_URL
-        sync: false # Set this to the URL of the tracking server above after deploy
-      - key: VITE_TRACKING_WS_URL
-        sync: false # Set this to the WSS URL of the tracking server above after deploy
+      - key: VITE_TRACKING_BACKEND_URL
+        value: https://mpnmjec-backend.onrender.com/

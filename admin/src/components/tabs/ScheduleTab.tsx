@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { supabase } from '../../lib/supabase';
+import { supabase, TRACKING_API_URL } from '../../lib/supabase';
 import { rebuildRouteGeometry } from '../../lib/routingApi';
 import { Schedule, Route, Bus, Driver } from '../../types';
 import { useStore } from '../../store';
@@ -8,7 +8,6 @@ import { TableSkeleton } from '../ui/Skeleton';
 import { ConfirmModal } from '../ui/Modal';
 import { Calendar, Clock, UserCheck, Trash2, Edit2, Link as LinkIcon, Compass, Activity, SearchX, ChevronLeft, ChevronRight } from 'lucide-react';
 
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 const DAILY_SCHEDULE_TYPE = 'daily' as const;
 const DIRECTIONS = ['outbound', 'return'] as const;
 
@@ -87,7 +86,7 @@ const ScheduleTab = () => {
     const { id, created_at, ...updateData } = payload as any;
     
     try {
-      const validationRes = await fetch(`${TRACKING_API_BASE}/schedules/validate-assignment`, {
+      const validationRes = await fetch(`${TRACKING_API_URL}/schedules/validate-assignment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

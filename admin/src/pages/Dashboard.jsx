@@ -2,10 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { supabase } from '../lib/supabase';
+import { supabase, TRACKING_API_URL } from '../lib/supabase';
 import { Bus, MapPin, Clock, Phone, AlertTriangle, Activity } from 'lucide-react';
-
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 
 // Fix Leaflet marker icons
 delete L.Icon.Default.prototype._getIconUrl;
@@ -42,7 +40,7 @@ const Dashboard = () => {
 
   const fetchActiveTrips = useCallback(async () => {
     try {
-      const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
+      const response = await fetch(`${TRACKING_API_URL}/trips/active`);
       if (!response.ok) return;
       const trips = await response.json();
       setActiveTrips(trips);

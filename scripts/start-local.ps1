@@ -50,8 +50,7 @@ STOP_ARRIVAL_RADIUS_METERS=80
 Ensure-File -Path (Join-Path $adminDir '.env.local') -Content @'
 VITE_SUPABASE_URL=https://placeholder.supabase.co
 VITE_SUPABASE_ANON_KEY=placeholder-anon-key
-VITE_TRACKING_API_URL=https://mpnmjec-backend.onrender.com/api
-VITE_TRACKING_WS_URL=wss://mpnmjec-backend.onrender.com/ws
+VITE_TRACKING_BACKEND_URL=https://mpnmjec-backend.onrender.com/
 '@
 
 Ensure-NodeModules -Path $backendDir

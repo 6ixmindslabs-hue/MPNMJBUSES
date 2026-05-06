@@ -9,8 +9,11 @@ Local workspace for the MPNMJEC transport platform:
 
 Default tracking backend:
 
+- Backend root: `https://mpnmjec-backend.onrender.com/`
 - API: `https://mpnmjec-backend.onrender.com/api`
 - WebSocket: `wss://mpnmjec-backend.onrender.com/ws`
+
+The apps derive the API and WebSocket endpoints from the backend root. For the admin dashboard, set `VITE_TRACKING_BACKEND_URL` when you need to point at another backend.
 
 ## Run Backend And Admin Locally
 

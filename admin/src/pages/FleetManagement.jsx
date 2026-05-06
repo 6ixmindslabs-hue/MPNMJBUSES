@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, TRACKING_API_URL } from '../lib/supabase';
 import { Bus, Settings, Plus, Search, MapPin, MoreVertical, Trash2, Edit2, Shield, Users as UsersIcon, Fuel } from 'lucide-react';
-
-const TRACKING_API_BASE = import.meta.env.VITE_TRACKING_API_URL || 'https://mpnmjec-backend.onrender.com/api';
 
 const FleetManagement = () => {
   const [buses, setBuses] = useState([]);
@@ -24,7 +22,7 @@ const FleetManagement = () => {
 
   const fetchLiveTripStates = useCallback(async () => {
     try {
-      const response = await fetch(`${TRACKING_API_BASE}/trips/active`);
+      const response = await fetch(`${TRACKING_API_URL}/trips/active`);
       if (!response.ok) return;
       const trips = await response.json();
       const nextMap = {};
