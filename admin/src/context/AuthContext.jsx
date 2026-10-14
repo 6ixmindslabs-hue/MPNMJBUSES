@@ -72,7 +72,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const loginDev = (email, password) => {
-    if (email === 'admin@mpnmjec.edu.in' && password === 'admin12345') {
+    const adminEmail = import.meta.env.VITE_ADMIN_EMAIL || 'admin@mpnmjec.edu.in';
+    const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD || 'admin12345';
+
+    if (email === adminEmail && password === adminPassword) {
       const mockUser = { id: 'dev-admin', email };
       const mockProfile = { full_name: 'MPNMJEC Admin', role: 'super_admin' };
       setUser(mockUser);
